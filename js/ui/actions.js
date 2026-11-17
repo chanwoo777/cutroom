@@ -56,9 +56,16 @@ export function createActions({ store, assets, playback, glfx }) {
 
     deleteSelected(ripple = false) {
       const locked = lockedIds();
-      const ids = new Set(store.selectedClips().filter((c) => !locked.has(c.trackId)).map((c) => c.id));
+      const sel = store.selectedClips().filter((c) => !locked.has(c.trackId));
+      const ids = new Set(sel.map((c) => c.id));
       if (!ids.size) return;
+      // A voice-over is made from its text, so it goes with it.
+      for (const c of sel) {
+        const v = c.kind === 'text' && c.voice?.clipId ? store.getClip(c.voice.clipId) : null;
+        if (v && !locked.has(v.trackId)) ids.add(v.id);
+      }
       if (ripple) rippleDelete(store.project, ids); else deleteClips(store.project, ids);
+      for (const c of store.project.clips) if (c.voice?.clipId && ids.has(c.voice.clipId)) delete c.voice;
       store.selection.clear();
       store.emit('selection');
       store.commit(ripple ? 'Ripple delete' : 'Delete');

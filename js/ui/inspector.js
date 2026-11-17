@@ -8,6 +8,8 @@ import {
   TEXT_FONTS, ANIM_IN, ANIM_OUT, DEFAULT_FX, DEFAULT_TRANSFORM, isVisual, isMedia, overwriteRange, clipEnd, maxTimelineDuration,
 } from '../core/ops.js';
 import { FPS_OPTIONS } from '../core/store.js';
+import { loadVoiceSettings, VOICE_LANGS, VOICES } from '../engine/voice.js';
+import { voiceControls, modelStatus, licenseNote, runWithProgress } from './voicepanel.js';
 
 const KIND_ICON = { video: 'film', image: 'image', audio: 'music', text: 'type', sticker: 'shapes', project: 'sliders' };
 const KIND_LABEL = { video: 'Video clip', image: 'Image', audio: 'Audio clip', text: 'Text', sticker: 'Sticker' };
@@ -17,11 +19,15 @@ export const customLuts = [];
 const decimals = (step) => (String(step).split('.')[1] || '').length;
 
 export class Inspector {
-  constructor({ store, assets, glfx, actions }) {
+  constructor({ store, assets, glfx, actions, voice, voiceover, audio }) {
     this.store = store;
     this.assets = assets;
     this.glfx = glfx;
     this.actions = actions;
+    this.voice = voice;
+    this.voiceover = voiceover;
+    this.audio = audio;
+    this.voiceSettings = loadVoiceSettings();
     this.root = document.getElementById('inspector');
     this.cubeInput = document.getElementById('cube-input');
     this.bindings = [];
@@ -210,6 +216,17 @@ export class Inspector {
 
   #multi(sel) {
     const A = this.actions;
+    const texts = sel.filter((c) => c.kind === 'text');
+    const voiceRows = [];
+    if (texts.length && this.voice) {
+      const btn = h('button', { type: 'button', class: 'btn bone block' }, icon('mic'), h('span', { text: `Voice-over ${texts.length} text clip${texts.length > 1 ? 's' : ''}` }));
+      btn.addEventListener('click', () => {
+        runWithProgress(btn, 'Voicing', (_onStep, setText) => this.voiceover.voiceTexts(texts.map((t) => t.id), this.voiceSettings, (i, n) => setText(`Voicing ${i + 1} of ${n}…`)))
+          .then((n) => toast(`Added ${n} voice-over${n > 1 ? 's' : ''}.`, { kind: 'ok' }))
+          .catch((err) => toast(err.message, { kind: 'error', timeout: 6000 }));
+      });
+      voiceRows.push(this.#section('AI voice-over', [modelStatus(this.voice), voiceControls(this.voiceSettings), btn, licenseNote()]));
+    }
     return [
       this.#head('project', h('h2', { text: `${sel.length} clips selected` }), `${formatTC(Math.min(...sel.map((c) => c.start)), this.store.project.fps)} – ${formatTC(Math.max(...sel.map(clipEnd)), this.store.project.fps)}`),
       this.#section('Selection', [
@@ -218,6 +235,7 @@ export class Inspector {
           h('button', { type: 'button', class: 'btn', on: { click: () => A.deleteSelected(false) } }, icon('trash'), h('span', { text: 'Delete' })),
           h('button', { type: 'button', class: 'btn', on: { click: () => A.deleteSelected(true) } }, icon('ripple'), h('span', { text: 'Ripple' }))),
       ]),
+      ...voiceRows,
     ];
   }
 
@@ -272,6 +290,8 @@ export class Inspector {
     out.push(this.#section('Timing', timing));
 
     if (clip0.kind === 'text') out.push(this.#textSection(C));
+    if (clip0.kind === 'text' && this.voice) out.push(this.#voiceSection(C));
+    if (clip0.kind === 'audio' && asset?.source === 'voice') out.push(this.#voiceInfo(C, asset));
     if (clip0.kind === 'sticker') out.push(this.#stickerSection(C));
     if (isVisual(clip0)) out.push(this.#transformSection(C, clip0));
     if (isVisual(clip0)) out.push(this.#animSection(C, clip0));
@@ -309,6 +329,75 @@ export class Inspector {
         this.#color({ label: 'Box colour', get: () => T().bgColor, set: (v) => { T().bgColor = v; }, commit: 'Box colour' }))),
       this.#slider({ label: 'Line height', min: 0.8, max: 2, step: 0.02, get: () => T().lineHeight, set: (v) => { T().lineHeight = v; }, commit: 'Line height', def: 1.12 }),
     ]);
+  }
+
+  #voiceSection(C) {
+    const settings = this.voiceSettings;
+    const store = this.store;
+    const linked = () => { const v = C().voice; return v?.clipId ? store.getClip(v.clipId) : null; };
+    const info = h('p', { class: 'insp-note voice-meta' });
+    const genBtn = h('button', { type: 'button', class: 'btn bone block' }, icon('mic'), h('span', { text: 'Generate voice-over' }));
+    const playBtn = h('button', { type: 'button', class: 'btn', title: 'Play the voice-over', 'aria-label': 'Play the voice-over' }, icon('play'), h('span', { text: 'Play' }));
+    const updInfo = () => {
+      const v = C().voice;
+      const clip = linked();
+      if (!v || !clip) {
+        info.textContent = 'Turns this text into narration with an AI voice, placed on an audio track under the text.';
+        genBtn.lastElementChild.textContent = 'Generate voice-over';
+        playBtn.hidden = true;
+        return;
+      }
+      const langName = (VOICE_LANGS.find((l) => l[0] === v.lang) || [v.lang, v.lang])[1];
+      const voiceName = (VOICES.find((x) => x[0] === v.voice) || [v.voice, v.voice])[1];
+      const stale = String(C().text.content || '').trim() !== v.text;
+      info.textContent = `${voiceName} · ${langName} · ${clip.duration.toFixed(1)} s on ${store.getTrack(clip.trackId)?.name || '?'}${stale ? '. The text changed since this voice was made: regenerate to match.' : ''}`;
+      info.classList.toggle('warn', stale);
+      genBtn.lastElementChild.textContent = stale ? 'Regenerate to match text' : 'Regenerate voice-over';
+      playBtn.hidden = false;
+    };
+    this.bindings.push(updInfo);
+    updInfo();
+    genBtn.addEventListener('click', () => {
+      runWithProgress(genBtn, 'Generating', (onStep) => this.voiceover.voiceText(C().id, settings, { onStep }))
+        .then(() => toast('Voice-over added under the text.', { kind: 'ok' }))
+        .catch((err) => toast(err.message, { kind: 'error', timeout: 6000 }));
+    });
+    playBtn.addEventListener('click', () => {
+      const clip = linked();
+      const buf = clip && this.assets.get(clip.assetId)?.buffer;
+      if (buf) this.audio.preview(buf);
+    });
+    // Already downloaded once? Start preparing now so the first click is quick.
+    if (this.voice.cached && this.voice.state === 'idle') this.voice.load().catch(() => {});
+    const fit = this.#check({ label: 'Fit text length to the voice', get: () => settings.fit, set: (v) => { settings.fit = v; } });
+    fit.querySelector('input').addEventListener('change', () => { try { localStorage.setItem('cutroom.voice', JSON.stringify(settings)); } catch { /* ignore */ } });
+    return this.#section('AI voice-over', [
+      modelStatus(this.voice),
+      info,
+      voiceControls(settings),
+      h('div', { class: 'field stack' }, fit),
+      h('div', { class: 'btn-row' }, genBtn, playBtn),
+      licenseNote(),
+    ]);
+  }
+
+  #voiceInfo(C, asset) {
+    const target = () => { const id = C().voiceOf; return id ? this.store.getClip(id) : null; };
+    const note = h('p', { class: 'insp-note' });
+    const upd = () => {
+      const t = target();
+      note.textContent = t?.kind === 'text'
+        ? `Generated from the text "${String(t.text.content).slice(0, 60)}". Moving either clip moves both (hold Alt to move one).`
+        : `AI narration (${asset.lang || 'auto'}). Captions made with it move along when you drag this clip (hold Alt to move it alone).`;
+    };
+    this.bindings.push(upd);
+    upd();
+    const rows = [note];
+    if (target()?.kind === 'text') {
+      rows.push(h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn small', on: { click: () => this.store.select([target().id]) } }, icon('type'), h('span', { text: 'Select its text' }))));
+    }
+    rows.push(licenseNote());
+    return this.#section('AI voice', rows);
   }
 
   #stickerSection(C) {

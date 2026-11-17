@@ -14,7 +14,9 @@ import { ExportDialog } from './ui/export.js';
 import { installShortcuts } from './ui/shortcuts.js';
 import { toast } from './ui/dom.js';
 import { buildDemo } from './demo.js';
-import { clamp } from './util.js';
+import { clamp, formatBytes } from './util.js';
+import { VoiceEngine, loadVoiceSettings } from './engine/voice.js';
+import { createVoiceover } from './voice/voiceover.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,14 +41,40 @@ function applyCanvasSize() {
   markDirty();
 }
 
+const voice = new VoiceEngine();
+const voiceover = createVoiceover({ store, assets, voice });
+let voicing = false;
+async function voiceSelected() {
+  const texts = store.selectedClips().filter((c) => c.kind === 'text');
+  if (!texts.length) {
+    toast('Select one or more text clips, then press Voice-over. To narrate a whole script, use Audio → AI voice-over.');
+    return;
+  }
+  if (voicing) return;
+  voicing = true;
+  const btn = $('act-voice');
+  btn.setAttribute('aria-busy', 'true');
+  btn.classList.add('is-busy');
+  try {
+    const n = await voiceover.voiceTexts(texts.map((c) => c.id), loadVoiceSettings());
+    toast(`Added ${n} AI voice-over${n > 1 ? 's' : ''}.`, { kind: 'ok' });
+  } catch (err) {
+    toast(err.message, { kind: 'error', timeout: 6000 });
+  } finally {
+    voicing = false;
+    btn.removeAttribute('aria-busy');
+    btn.classList.remove('is-busy');
+  }
+}
+
 const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize });
-const timeline = new Timeline({ store, assets, playback, actions });
-const inspector = new Inspector({ store, assets, glfx, actions });
-const bin = new MediaBin({ store, assets, audio, actions });
+const timeline = new Timeline({ store, assets, playback, actions, onVoice: voiceSelected });
+const inspector = new Inspector({ store, assets, glfx, actions, voice, voiceover, audio });
+const bin = new MediaBin({ store, assets, audio, actions, voice, voiceover });
 const exporter = new ExportDialog({ store, renderer, playback, audio, blobs, monitor, applyCanvasSize });
 const shortcutsDialog = $('shortcuts-dialog');
 shortcutsDialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => shortcutsDialog.close()));
-installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog });
+installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice: voiceSelected });
 applyCanvasSize();
 
 // ---------- app bar ----------
@@ -108,6 +136,15 @@ function syncHistory() {
   redoBtn.title = hst.canRedo ? `Redo ${hst.redoLabel} (Ctrl+Shift+Z)` : 'Nothing to redo';
 }
 st.engine.textContent = glfx ? 'WebGL2 grading' : 'Canvas 2D grading (WebGL2 unavailable)';
+const stVoice = $('st-voice');
+voice.on('state', (v) => {
+  stVoice.hidden = v.state === 'idle';
+  if (v.state === 'loading') {
+    const p = v.progress.total ? Math.round((v.progress.loaded / v.progress.total) * 100) : 0;
+    stVoice.textContent = v.progress.phase === 'prepare' ? 'AI voice: preparing…' : `AI voice: ${p}% of ${formatBytes(v.progress.total)}`;
+  } else if (v.state === 'ready') stVoice.textContent = `AI voice ready · ${v.backend === 'webgpu' ? 'WebGPU' : 'CPU'}`;
+  else if (v.state === 'error') stVoice.textContent = 'AI voice unavailable';
+});
 blobs.on('change', (n) => { st.blobs.textContent = `${n} object URL${n === 1 ? '' : 's'} live`; });
 
 let rescheduleTimer = 0;
@@ -219,4 +256,4 @@ function frame() {
 requestAnimationFrame(frame);
 
 // Exposed for debugging in the console only; holds no secrets.
-window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx };
+window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx, voice, voiceover };

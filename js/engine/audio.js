@@ -33,6 +33,10 @@ export class AudioEngine {
     this.ctx = ctx;
     this.bus = ctx.createGain();
     this.bus.gain.value = this.masterVolume;
+    // Always mix in stereo, so mono sources (voice-overs, mono files) feed both channels and both meters.
+    this.bus.channelCount = 2;
+    this.bus.channelCountMode = 'explicit';
+    this.bus.channelInterpretation = 'speakers';
     this.monitor = ctx.createGain();
     this.bus.connect(this.monitor);
     this.monitor.connect(ctx.destination);

@@ -50,7 +50,21 @@ export function makeClip(kind, props = {}) {
 export function cloneClip(c) {
   const copy = clone(c);
   copy.id = uid('c');
+  delete copy.voice; // a copy (or the right half of a split) does not own the original's voice-over
   return copy;
+}
+
+/** Clips that travel with this one: a text and its voice-over, or a narration and its captions. */
+export function linkedClips(project, id) {
+  const byId = new Map(project.clips.map((c) => [c.id, c]));
+  const c = byId.get(id);
+  if (!c) return [];
+  const out = new Set();
+  if (c.voice?.clipId && byId.has(c.voice.clipId)) out.add(c.voice.clipId);
+  if (c.voiceOf && byId.get(c.voiceOf)?.voice?.clipId === c.id) out.add(c.voiceOf);
+  for (const x of project.clips) if (x.voiceOf === c.id && x.kind === 'text' && !x.voice) out.add(x.id);
+  out.delete(id);
+  return [...out];
 }
 
 /** Longest the clip may run on the timeline given its source media (Infinity for stills, text, stickers). */

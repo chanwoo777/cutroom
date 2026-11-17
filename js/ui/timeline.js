@@ -2,7 +2,7 @@
 // playhead, snap line, razor guide and marquee (redrawn every frame while playing). A native scroller
 // underneath provides the scroll extents and scrollbars; the canvases draw at its scroll offset.
 import { clamp, quantize, formatTC, cssVar, roundRectPath, easeOutExpo, reducedMotion } from '../util.js';
-import { clipEnd, overwriteRange, trackKindFor } from '../core/ops.js';
+import { clipEnd, overwriteRange, trackKindFor, linkedClips } from '../core/ops.js';
 import { drawSticker } from '../engine/stickers.js';
 import { h, icon, sizeCanvas, announce } from './dom.js';
 
@@ -21,11 +21,12 @@ export const dragPayload = { current: null };
 const $ = (id) => document.getElementById(id);
 
 export class Timeline {
-  constructor({ store, assets, playback, actions }) {
+  constructor({ store, assets, playback, actions, onVoice }) {
     this.store = store;
     this.assets = assets;
     this.playback = playback;
     this.actions = actions;
+    this.onVoice = onVoice;
     this.el = {
       ruler: $('tl-ruler'), rulerWrap: $('tl-ruler-wrap'), heads: $('tl-heads-inner'), main: $('tl-main'),
       scroller: $('tl-scroller'), spacer: $('tl-spacer'), canvas: $('timeline-canvas'), over: $('tl-overlay'),
@@ -195,6 +196,7 @@ export class Timeline {
     const snapBtn = $('act-snap');
     snapBtn.addEventListener('click', () => store.setSnap(!store.snap));
     store.on('snap', (v) => { snapBtn.setAttribute('aria-pressed', String(v)); announce(`Snapping ${v ? 'on' : 'off'}`); });
+    $('act-voice').addEventListener('click', () => this.onVoice?.());
     $('act-add-v').addEventListener('click', () => this.actions.addTrack('video'));
     $('act-add-a').addEventListener('click', () => this.actions.addTrack('audio'));
     $('zoom-in').addEventListener('click', () => this.zoomBy(1.4));
@@ -361,6 +363,18 @@ export class Timeline {
         if (!c || !tr || tr.locked) continue;
         origin.set(id, { start: c.start, trackId: c.trackId, ti: this.trackIndex(c.trackId), kind: trackKindFor(c.kind), duration: c.duration });
       }
+      if (!e.altKey) {
+        // Voice-overs follow their text (and captions follow their narration) in time, on their own tracks.
+        for (const id of [...origin.keys()]) {
+          for (const fid of linkedClips(store.project, id)) {
+            if (origin.has(fid)) continue;
+            const c = store.getClip(fid);
+            const tr = c && store.getTrack(c.trackId);
+            if (!c || !tr || tr.locked) continue;
+            origin.set(fid, { start: c.start, trackId: c.trackId, ti: this.trackIndex(c.trackId), kind: trackKindFor(c.kind), duration: c.duration, follower: true });
+          }
+        }
+      }
       this.#begin(e, { type: 'move', sx: p.x + this.scrollX, sy: p.y, anchorId: hit.clip.id, anchorTi: hit.trackIndex, origin, moved: false, lastShift: 0, collapse: wasSelected && !mod });
       return;
     }
@@ -393,8 +407,9 @@ export class Timeline {
     if (!d.moved && Math.hypot(cx - d.sx, p.y - d.sy) < 3) return;
     if (!d.moved) { d.moved = true; if (store.playing) this.playback.pause(); }
     let dT = (cx - d.sx) / this.zoom;
-    const origins = [...d.origin.values()];
-    const minStart = Math.min(...origins.map((o) => o.start));
+    const all = [...d.origin.values()];
+    const origins = all.filter((o) => !o.follower);
+    const minStart = Math.min(...all.map((o) => o.start));
     if (minStart + dT < 0) dT = -minStart;
     this.snapLine = null;
     if (this.#snapOn(e)) {
@@ -420,7 +435,7 @@ export class Timeline {
       const c = store.getClip(id);
       if (!c) continue;
       c.start = Math.max(0, quantize(o.start + dT, fps));
-      c.trackId = tracks[o.ti + shift]?.id || o.trackId;
+      c.trackId = o.follower ? o.trackId : tracks[o.ti + shift]?.id || o.trackId;
     }
     store.touch();
   }

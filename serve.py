@@ -10,8 +10,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8797
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; "
-       "media-src 'self' blob:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:; "
+CSP = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; "
+       "media-src 'self' blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://*.hf.co; worker-src 'self' blob:; "
        "manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'")
 
 
@@ -24,6 +24,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".html": "text/html; charset=utf-8",
         ".svg": "image/svg+xml",
         ".json": "application/json",
+        ".wasm": "application/wasm",
+        ".onnx": "application/octet-stream",
     }
 
     def __init__(self, *args, **kwargs):

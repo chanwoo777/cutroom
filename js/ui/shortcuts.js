@@ -1,7 +1,7 @@
 import { isTypingTarget } from '../util.js';
 import { announce } from './dom.js';
 
-export function installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog }) {
+export function installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice }) {
   // Space on a focused button should play/pause, not click the button.
   window.addEventListener('keyup', (e) => {
     if (e.key === ' ' && e.target instanceof HTMLButtonElement && !e.target.closest('dialog')) e.preventDefault();
@@ -59,6 +59,7 @@ export function installShortcuts({ store, actions, playback, timeline, monitor, 
         case '-': case '_': timeline.zoomBy(1 / 1.4); break;
         case 'z': case 'Z': if (e.shiftKey) timeline.zoomFit(); else handled = false; break;
         case 'g': case 'G': monitor.toggleGuides(); break;
+        case 't': case 'T': onVoice?.(); break;
         case '?': shortcutsDialog.showModal(); break;
         case 'Escape':
           if (!timeline.cancelDrag() && !monitor.cancelDrag()) {

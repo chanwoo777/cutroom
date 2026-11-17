@@ -5,6 +5,9 @@ import { makeClip } from '../core/ops.js';
 import { SHAPES, EMOJI, drawSticker, stickerAspect } from '../engine/stickers.js';
 import { SFX_LIST, BEAT_STYLES, KEYS, renderSfx, renderBeat } from '../engine/synth.js';
 import { dragPayload } from './timeline.js';
+import { loadVoiceSettings, saveVoiceSettings } from '../engine/voice.js';
+import { splitScript } from '../voice/voiceover.js';
+import { voiceControls, modelStatus, licenseNote, runWithProgress } from './voicepanel.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,11 +23,13 @@ const TEXT_PRESETS = [
 const SHAPE_COLORS = { star: '#d8382b', burst: '#e6e0d2', heart: '#d8382b', arrow: '#e6e0d2', ring: '#d8382b', bubble: '#e6e0d2', bolt: '#b98a2e', sparkle: '#e6e0d2', check: '#4f6b86', pin: '#d8382b', tape: '#e6e0d2', brackets: '#e6e0d2', swoosh: '#d8382b' };
 
 export class MediaBin {
-  constructor({ store, assets, audio, actions }) {
+  constructor({ store, assets, audio, actions, voice, voiceover }) {
     this.store = store;
     this.assets = assets;
     this.audio = audio;
     this.actions = actions;
+    this.voice = voice;
+    this.voiceover = voiceover;
     this.fileInput = $('file-input');
     this.posters = new Map();
     this.sfxCache = new Map();
@@ -291,8 +296,9 @@ export class MediaBin {
 
     pane.replaceChildren(
       h('div', { class: 'pane-head' }, h('h2', { text: 'Audio' })),
-      h('p', { class: 'pane-note', text: 'Every sound here is synthesized on this device with Web Audio: royalty-free, no downloads.' }),
+      ...(this.voice ? this.#narrator() : []),
       h('h3', { text: 'Beat generator' }),
+      h('p', { class: 'pane-note', text: 'Beats and effects are synthesized on this device with Web Audio: royalty-free, no downloads.' }),
       h('div', { class: 'beat-form' },
         h('div', { class: 'row' }, h('label', { for: 'beat-style', text: 'Style' }), style),
         h('div', { class: 'row' }, h('label', { for: 'beat-key', text: 'Key' }), key),
@@ -301,6 +307,57 @@ export class MediaBin {
         h('div', { class: 'actions' }, previewBtn, addBtn)),
       h('h3', { text: 'Sound effects' }),
       h('div', {}, ...rows));
+  }
+
+  /** Script → AI narration with captions timed to each sentence. */
+  #narrator() {
+    const settings = loadVoiceSettings();
+    let draft = '';
+    try { draft = sessionStorage.getItem('cutroom.script') || ''; } catch { /* storage blocked */ }
+    const ta = h('textarea', {
+      class: 'text-area', rows: 5, spellcheck: 'true', id: 'narrate-script',
+      placeholder: 'Type or paste a script. Each sentence becomes a caption timed to the voice.\n예: 안녕하세요. 오늘은 새 영상을 소개합니다.',
+    });
+    ta.value = draft;
+    const count = h('span', { class: 'count' });
+    const syncCount = () => {
+      const n = splitScript(ta.value).length;
+      count.textContent = n ? `${n} sentence${n > 1 ? 's' : ''}` : '';
+      try { sessionStorage.setItem('cutroom.script', ta.value.slice(0, 20000)); } catch { /* ignore */ }
+    };
+    ta.addEventListener('input', syncCount);
+    syncCount();
+    const captions = h('input', { type: 'checkbox' });
+    captions.checked = settings.captions !== false;
+    captions.addEventListener('change', () => { settings.captions = captions.checked; saveVoiceSettings(settings); });
+    const previewBtn = h('button', { type: 'button', class: 'btn' }, icon('play'), h('span', { text: 'Preview' }));
+    const addBtn = h('button', { type: 'button', class: 'btn bone' }, icon('mic'), h('span', { text: 'Add to timeline' }));
+    previewBtn.addEventListener('click', () => {
+      const first = splitScript(ta.value).slice(0, 2).join(' ');
+      if (!first) { toast('Write a script first.'); ta.focus(); return; }
+      runWithProgress(previewBtn, 'Voicing', async (onStep) => {
+        const r = await this.voiceover.speak(first, settings, onStep);
+        await this.audio.preview(r.buffer);
+      }).catch((err) => toast(err.message, { kind: 'error', timeout: 6000 }));
+    });
+    addBtn.addEventListener('click', () => {
+      if (!splitScript(ta.value).length) { toast('Write a script first.'); ta.focus(); return; }
+      runWithProgress(addBtn, 'Voicing', (_onStep, setText) => this.voiceover.narrate(ta.value, settings, {
+        onProgress: (i, n) => setText(i < n ? `Sentence ${i + 1} of ${n}…` : 'Placing…'),
+      })).then((r) => toast(`Added ${r.duration.toFixed(1)} s of narration${settings.captions ? ` with ${r.sentences} captions` : ''} at the playhead.`, { kind: 'ok' }))
+        .catch((err) => toast(err.message, { kind: 'error', timeout: 6000 }));
+    });
+    return [
+      h('h3', {}, 'AI voice-over ', count),
+      h('div', { class: 'beat-form narrator' },
+        modelStatus(this.voice),
+        h('label', { class: 'sr-only', for: 'narrate-script', text: 'Narration script' }),
+        ta,
+        voiceControls(settings),
+        h('label', { class: 'check' }, captions, h('span', { text: 'Add captions timed to each sentence' })),
+        h('div', { class: 'actions' }, previewBtn, addBtn),
+        licenseNote()),
+    ];
   }
 
   async #sfx(id) {

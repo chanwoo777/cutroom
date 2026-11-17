@@ -310,6 +310,27 @@ input[type="color"].swatch::-webkit-color-swatch { border: 0; border-radius: 2px
 .beat-form .actions { display: flex; gap: 8px; }
 .beat-form .actions .btn { flex: 1; }
 
+/* AI voice */
+.voice-status { display: grid; gap: 8px; padding: 10px 12px; margin-bottom: 12px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--border); }
+.voice-status .btn { justify-self: start; }
+.voice-status progress { height: 6px; }
+.voice-status progress::-webkit-progress-value { background: var(--bone-deep); }
+.voice-status progress::-moz-progress-bar { background: var(--bone-deep); }
+.voice-line { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.voice-line .i { width: 14px; height: 14px; flex: none; }
+.voice-line.ok { color: var(--ok); }
+.voice-line.error { color: var(--danger); }
+.voice-controls { margin: 4px 0 6px; }
+.voice-controls .ctl .range { flex: 1; }
+.voice-controls .ctl .unit { min-width: 38px; text-align: right; }
+.voice-meta.warn { color: var(--warn); }
+.voice-license { margin: 10px 0 0; font-size: 11px; line-height: 1.45; color: var(--faint); }
+.narrator textarea.text-area { min-height: 96px; }
+.narrator .check { font-size: 12px; }
+.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"] .i { animation: pulse 900ms ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: 0.45; } to { opacity: 1; } }
+
 /* ---------- Monitor ---------- */
 .monitor { grid-area: monitor; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--monitor-bg); container-type: inline-size; container-name: monitor; }
 .stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; }
