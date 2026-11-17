@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#1C1B19">
+  <title>Cutroom · in-browser video editor</title>
+  <meta name="description" content="Cut, grade, title and export video entirely in your browser. Files open from your disk and never leave the tab.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-start" viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M18 5.8v12.4a.6.6 0 0 1-.9.5L9 12.5a.6.6 0 0 1 0-1l8.1-6.2a.6.6 0 0 1 .9.5z"/></symbol>
+  <symbol id="i-end" viewBox="0 0 24 24"><path d="M18 5v14"/><path d="M6 5.8v12.4a.6.6 0 0 0 .9.5l8.1-6.2a.6.6 0 0 0 0-1L6.9 5.3a.6.6 0 0 0-.9.5z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3l3 3-3 3"/><path d="M4 11.5V10a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12.5V14a4 4 0 0 1-4 4H4"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M5.5 3.8l12.6 6.1a.5.5 0 0 1-.1.9l-5.2 1.6-2.3 5.2a.5.5 0 0 1-.9-.1L5 4.4a.5.5 0 0 1 .5-.6z"/></symbol>
+  <symbol id="i-razor" viewBox="0 0 24 24"><circle cx="6" cy="6.5" r="2.6"/><circle cx="6" cy="17.5" r="2.6"/><path d="M8.2 8l11.8 10"/><path d="M8.2 16L20 6"/></symbol>
+  <symbol id="i-split" viewBox="0 0 24 24"><rect x="2.5" y="7" width="7" height="10" rx="1.5"/><rect x="14.5" y="7" width="7" height="10" rx="1.5"/><path d="M12 3.5v17"/></symbol>
+  <symbol id="i-magnet" viewBox="0 0 24 24"><path d="M6 4.5V11a6 6 0 0 0 12 0V4.5"/><path d="M6 8.5h3.5M14.5 8.5H18"/><path d="M9.5 4.5V11a2.5 2.5 0 0 0 5 0V4.5"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12.2a1 1 0 0 0 1 .8h8a1 1 0 0 0 1-.8L18 7"/><path d="M9 7V4.5h6V7"/></symbol>
+  <symbol id="i-ripple" viewBox="0 0 24 24"><rect x="2.5" y="7" width="6.5" height="10" rx="1.5"/><path d="M12.5 12h9"/><path d="M15.5 9l-3 3 3 3"/></symbol>
+  <symbol id="i-duplicate" viewBox="0 0 24 24"><rect x="8" y="8" width="12.5" height="12.5" rx="2"/><path d="M16 8V5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 4 5v9.5A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6M10.5 7.5v6M7.5 10.5h6"/></symbol>
+  <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6M7.5 10.5h6"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7.5 4v16M16.5 4v16M3 9h4.5M3 15h4.5M16.5 9H21M16.5 15H21"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></symbol>
+  <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 7V4.5h14V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/></symbol>
+  <symbol id="i-shapes" viewBox="0 0 24 24"><path d="M8 3.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 13.3l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2.5 12h2.5l2-5.5 3 11 3-8.5 2 5 1.8-2h4.7"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/><path d="M4 4l16 16"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 7.6-1.8"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-volume-x" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 10l5 5M21 10l-5 5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></symbol>
+  <symbol id="i-guides" viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="M6.5 8.5h11v7h-11z" stroke-dasharray="2 2"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14.5h9"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-new" viewBox="0 0 24 24"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/><path d="M12 11.5v6M9 14.5h6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
+</svg>
+
+<div class="app" id="app">
+  <header class="appbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 7h13l-4.5 18H3z" fill="#E6E0D2"/><path d="M19 7h10v18H14.5z" fill="#D8382B"/></svg>
+      <span class="wordmark">Cutroom</span>
+    </div>
+    <label class="title-field">
+      <span class="sr-only">Project title</span>
+      <input id="project-title" type="text" maxlength="80" spellcheck="false" autocomplete="off" value="Untitled cut">
+    </label>
+    <div class="seg" role="radiogroup" aria-label="Aspect ratio" id="aspect-group">
+      <button type="button" role="radio" data-aspect="16:9" aria-checked="true">16:9</button>
+      <button type="button" role="radio" data-aspect="9:16" aria-checked="false">9:16</button>
+      <button type="button" role="radio" data-aspect="1:1" aria-checked="false">1:1</button>
+      <button type="button" role="radio" data-aspect="4:5" aria-checked="false">4:5</button>
+    </div>
+    <div class="appbar-group">
+      <button type="button" class="icon-btn" id="btn-undo" aria-label="Undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
+      <button type="button" class="icon-btn" id="btn-redo" aria-label="Redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
+    </div>
+    <div class="appbar-spacer"></div>
+    <button type="button" class="btn ghost" id="btn-new"><svg class="i"><use href="#i-new"/></svg><span>New</span></button>
+    <button type="button" class="icon-btn" id="btn-shortcuts" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><svg class="i"><use href="#i-keyboard"/></svg></button>
+    <button type="button" class="btn primary" id="btn-export"><svg class="i"><use href="#i-download"/></svg><span>Export</span></button>
+  </header>
+
+  <main class="workspace" id="workspace">
+    <section class="panel bin" aria-label="Library">
+      <div class="tabs" role="tablist" aria-label="Library">
+        <button type="button" role="tab" id="tab-media" aria-controls="pane-media" aria-selected="true"><svg class="i"><use href="#i-film"/></svg><span>Media</span></button>
+        <button type="button" role="tab" id="tab-text" aria-controls="pane-text" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-type"/></svg><span>Text</span></button>
+        <button type="button" role="tab" id="tab-stickers" aria-controls="pane-stickers" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-shapes"/></svg><span>Stickers</span></button>
+        <button type="button" role="tab" id="tab-audio" aria-controls="pane-audio" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-wave"/></svg><span>Audio</span></button>
+      </div>
+      <div class="pane" role="tabpanel" id="pane-media" aria-labelledby="tab-media"></div>
+      <div class="pane" role="tabpanel" id="pane-text" aria-labelledby="tab-text" hidden></div>
+      <div class="pane" role="tabpanel" id="pane-stickers" aria-labelledby="tab-stickers" hidden></div>
+      <div class="pane" role="tabpanel" id="pane-audio" aria-labelledby="tab-audio" hidden></div>
+    </section>
+
+    <section class="monitor" aria-label="Program monitor">
+      <div class="stage" id="stage">
+        <div class="frame" id="frame">
+          <canvas id="program" class="program" aria-label="Program output"></canvas>
+          <canvas id="overlay" class="overlay" tabindex="0" aria-label="Program monitor. Drag to move the selected layer; corner handles scale, the top handle rotates. Arrow keys nudge."></canvas>
+        </div>
+        <div class="empty-stage" id="empty-stage">
+          <h1>Drop footage to start cutting</h1>
+          <p>Video, images and audio open straight from your disk. Nothing is uploaded: every frame stays in this tab.</p>
+          <div class="empty-actions">
+            <button type="button" class="btn bone" id="empty-import"><svg class="i"><use href="#i-import"/></svg><span>Import media</span></button>
+            <button type="button" class="btn ghost" id="empty-demo"><svg class="i"><use href="#i-sparkles"/></svg><span>Build a demo cut</span></button>
+          </div>
+          <p class="empty-formats">MP4 · WebM · MOV · PNG · JPG · MP3 · WAV</p>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="tc-group">
+          <output id="tc-now" class="tc tc-now" aria-label="Playhead timecode">00:00:00:00</output>
+          <span class="tc-sep" aria-hidden="true">/</span>
+          <span id="tc-dur" class="tc tc-dur" aria-label="Sequence duration">00:00:00:00</span>
+        </div>
+        <div class="transport-btns">
+          <button type="button" class="icon-btn" id="tp-start" aria-label="Go to start (Home)"><svg class="i"><use href="#i-start"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-back" aria-label="Back one frame (Left arrow)"><svg class="i"><use href="#i-back"/></svg></button>
+          <button type="button" class="play-btn" id="tp-play" aria-label="Play (Space)"><svg class="i"><use href="#i-play"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-fwd" aria-label="Forward one frame (Right arrow)"><svg class="i"><use href="#i-fwd"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-end" aria-label="Go to end (End)"><svg class="i"><use href="#i-end"/></svg></button>
+        </div>
+        <div class="transport-right">
+          <button type="button" class="icon-btn" id="tp-loop" aria-label="Loop playback" aria-pressed="false"><svg class="i"><use href="#i-loop"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-guides" aria-label="Safe-zone guides (G)" aria-pressed="false"><svg class="i"><use href="#i-guides"/></svg></button>
+          <label class="sr-only" for="tp-quality">Preview quality</label>
+          <select id="tp-quality" class="select compact" title="Preview quality">
+            <option value="1">Full</option>
+            <option value="0.5">Half</option>
+            <option value="0.25">Quarter</option>
+          </select>
+          <div class="volume">
+            <label class="sr-only" for="tp-volume">Master volume</label>
+            <svg class="i" aria-hidden="true"><use href="#i-volume"/></svg>
+            <input type="range" id="tp-volume" min="0" max="100" value="90" class="range">
+            <canvas id="meter" class="meter" width="44" height="14" aria-hidden="true"></canvas>
+          </div>
+          <button type="button" class="icon-btn" id="tp-full" aria-label="Full-screen monitor"><svg class="i"><use href="#i-expand"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel inspector" aria-label="Inspector" id="inspector"></aside>
+
+    <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" aria-label="Resize timeline" tabindex="0"></div>
+
+    <section class="timeline" id="timeline" aria-label="Timeline">
+      <div class="tl-toolbar">
+        <div class="tool-group" role="radiogroup" aria-label="Timeline tool">
+          <button type="button" class="icon-btn" role="radio" id="tool-select" aria-checked="true" aria-label="Select tool (V)" title="Select (V)"><svg class="i"><use href="#i-cursor"/></svg></button>
+          <button type="button" class="icon-btn razor" role="radio" id="tool-razor" aria-checked="false" aria-label="Razor tool (C)" title="Razor (C)"><svg class="i"><use href="#i-razor"/></svg></button>
+        </div>
+        <span class="tl-divider" aria-hidden="true"></span>
+        <button type="button" class="icon-btn" id="act-split" title="Split at playhead (S)" aria-label="Split at playhead (S)"><svg class="i"><use href="#i-split"/></svg></button>
+        <button type="button" class="icon-btn" id="act-duplicate" title="Duplicate (Ctrl+D)" aria-label="Duplicate (Ctrl+D)"><svg class="i"><use href="#i-duplicate"/></svg></button>
+        <button type="button" class="icon-btn" id="act-delete" title="Delete (Del)" aria-label="Delete (Delete)"><svg class="i"><use href="#i-trash"/></svg></button>
+        <button type="button" class="icon-btn" id="act-ripple" title="Ripple delete (Shift+Del)" aria-label="Ripple delete (Shift+Delete)"><svg class="i"><use href="#i-ripple"/></svg></button>
+        <span class="tl-divider" aria-hidden="true"></span>
+        <button type="button" class="icon-btn" id="act-snap" aria-pressed="true" title="Magnetic snapping (N)" aria-label="Magnetic snapping (N)"><svg class="i"><use href="#i-magnet"/></svg></button>
+        <button type="button" class="btn ghost small" id="act-add-v" title="Add a video track"><svg class="i"><use href="#i-plus"/></svg><span>Video track</span></button>
+        <button type="button" class="btn ghost small" id="act-add-a" title="Add an audio track"><svg class="i"><use href="#i-plus"/></svg><span>Audio track</span></button>
+        <div class="tl-spacer-flex"></div>
+        <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out (-)"><svg class="i"><use href="#i-zoom-out"/></svg></button>
+        <label class="sr-only" for="zoom-slider">Timeline zoom</label>
+        <input type="range" id="zoom-slider" class="range zoom" min="0" max="1000" value="500">
+        <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in (=)"><svg class="i"><use href="#i-zoom-in"/></svg></button>
+        <button type="button" class="icon-btn" id="zoom-fit" aria-label="Zoom to fit (Shift+Z)" title="Zoom to fit (Shift+Z)"><svg class="i"><use href="#i-fit"/></svg></button>
+      </div>
+      <div class="tl-body">
+        <div class="tl-corner"><span id="tl-tc" class="tc">00:00:00:00</span></div>
+        <div class="tl-ruler" id="tl-ruler-wrap"><canvas id="tl-ruler" aria-label="Timeline ruler. Click or drag to move the playhead."></canvas></div>
+        <div class="tl-heads" id="tl-heads"><div class="tl-heads-inner" id="tl-heads-inner"></div></div>
+        <div class="tl-main" id="tl-main">
+          <div class="tl-scroller" id="tl-scroller"><div class="tl-spacer" id="tl-spacer"></div></div>
+          <canvas id="timeline-canvas" class="tl-canvas" tabindex="0" role="application" aria-roledescription="timeline" aria-label="Timeline tracks" aria-describedby="tl-help"></canvas>
+          <canvas id="tl-overlay" class="tl-overlay" aria-hidden="true"></canvas>
+        </div>
+      </div>
+      <p id="tl-help" class="sr-only">Click a clip to select it, drag to move, drag its edges to trim. Space plays, S splits at the playhead, Delete removes, Shift plus Delete ripple-deletes, arrow keys step one frame, up and down jump between edit points.</p>
+      <div id="tl-live" class="sr-only" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span class="status-item privacy"><svg class="i"><use href="#i-shield"/></svg><span>Local only · network blocked by CSP</span></span>
+    <span class="status-item" id="st-blobs">0 object URLs live</span>
+    <span class="status-item" id="st-engine">Engine starting…</span>
+    <span class="status-spacer"></span>
+    <span class="status-item" id="st-drift" hidden></span>
+    <span class="status-item tabular" id="st-format">1920×1080 · 30 fps</span>
+  </footer>
+</div>
+
+<div id="media-pool" class="media-pool" aria-hidden="true"></div>
+<input type="file" id="file-input" multiple hidden accept="video/mp4,video/webm,video/quicktime,.mov,.m4v,image/png,image/jpeg,image/webp,image/gif,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/mp4,audio/aac,audio/flac,.mp3,.wav,.m4a,.ogg,.flac,.aac">
+<input type="file" id="cube-input" hidden accept=".cube">
+
+<dialog id="export-dialog" class="dlg" aria-labelledby="export-title">
+  <div class="dlg-head">
+    <h2 id="export-title">Export</h2>
+    <button type="button" class="icon-btn" data-close aria-label="Close export dialog"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dlg-body" id="export-settings">
+    <div class="field-grid">
+      <label for="ex-res">Resolution</label>
+      <select id="ex-res" class="select"></select>
+      <label for="ex-fps">Frame rate</label>
+      <select id="ex-fps" class="select"></select>
+      <label for="ex-format">Format</label>
+      <select id="ex-format" class="select"></select>
+      <span class="field-label" id="ex-quality-label">Quality</span>
+      <div class="seg" role="radiogroup" aria-labelledby="ex-quality-label" id="ex-quality">
+        <button type="button" role="radio" data-q="draft" aria-checked="false">Draft</button>
+        <button type="button" role="radio" data-q="standard" aria-checked="true">Standard</button>
+        <button type="button" role="radio" data-q="high" aria-checked="false">High</button>
+      </div>
+      <span class="field-label">Audio</span>
+      <label class="check"><input type="checkbox" id="ex-monitor"> <span>Play audio while exporting</span></label>
+    </div>
+    <p class="dlg-summary tabular" id="ex-summary"></p>
+    <p class="dlg-note">Rendering runs in real time on this device and never touches a server. Keep this tab visible until it finishes.</p>
+  </div>
+  <div class="dlg-body" id="export-progress" hidden>
+    <div class="progress-row"><span id="ex-phase">Rendering</span><span class="tabular" id="ex-pct">0%</span></div>
+    <progress id="ex-bar" max="1" value="0"></progress>
+    <p class="dlg-summary tabular" id="ex-eta"></p>
+  </div>
+  <div class="dlg-foot">
+    <span class="dlg-foot-info tabular" id="ex-result"></span>
+    <button type="button" class="btn ghost" id="ex-cancel">Cancel</button>
+    <button type="button" class="btn primary" id="ex-start"><svg class="i"><use href="#i-download"/></svg><span>Start export</span></button>
+  </div>
+</dialog>
+
+<dialog id="shortcuts-dialog" class="dlg wide" aria-labelledby="shortcuts-title">
+  <div class="dlg-head">
+    <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+    <button type="button" class="icon-btn" data-close aria-label="Close shortcuts"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dlg-body shortcuts">
+    <dl>
+      <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
+      <div><dt><kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></dt><dd>Back 1 s · pause · play</dd></div>
+      <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one frame (Shift: 1 second)</dd></div>
+      <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous / next edit point</dd></div>
+      <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Start / end of sequence</dd></div>
+      <div><dt><kbd>S</kbd></dt><dd>Split at playhead</dd></div>
+      <div><dt><kbd>V</kbd> <kbd>C</kbd></dt><dd>Select tool · razor tool</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Duplicate selection</dd></div>
+      <div><dt><kbd>Del</kbd></dt><dd>Delete selection</dd></div>
+      <div><dt><kbd>Shift</kbd> <kbd>Del</kbd></dt><dd>Ripple delete (close the gap)</dd></div>
+      <div><dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Nudge selection one frame</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo (Ctrl+Shift+Z or Ctrl+Y redo)</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Select all clips</dd></div>
+      <div><dt><kbd>N</kbd></dt><dd>Toggle magnetic snapping</dd></div>
+      <div><dt><kbd>=</kbd> <kbd>-</kbd></dt><dd>Zoom timeline (Shift+Z fits)</dd></div>
+      <div><dt><kbd>G</kbd></dt><dd>Safe-zone guides</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt><dd>Export</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Cancel drag · clear selection</dd></div>
+    </dl>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<noscript><p class="noscript">Cutroom runs entirely in your browser and needs JavaScript enabled.</p></noscript>
+</body>
+</html>
