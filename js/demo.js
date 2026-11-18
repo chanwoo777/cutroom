@@ -147,13 +147,13 @@ export async function buildDemo({ store, assets, audio, onProgress = () => {} })
     t += 5;
   }
   if (aCity) {
-    clips.push(makeClip('image', { assetId: aCity.id, name: aCity.name, trackId: v1.id, start: t, duration: 5, motion: 'zoom-out', fit: 'cover', fx: { lut: 'golden', lutAmount: 80, contrast: 10 }, anim: { in: 'none', out: 'fade', dur: 0.8 } }));
+    clips.push(makeClip('image', { assetId: aCity.id, name: aCity.name, trackId: v1.id, start: t, duration: 5, motion: 'zoom-out', fit: 'cover', fx: { lut: 'golden', lutAmount: 80, contrast: 10 }, introAnimation: { type: 'none', duration: 0.8 }, outroAnimation: { type: 'fade', duration: 0.8 } }));
     t += 5;
   }
-  clips.push(makeClip('text', { name: 'Title', trackId: v2.id, start: 0.4, duration: 3.2, text: { content: 'Cutroom', size: 0.16, weight: 900 }, anim: { in: 'pop', out: 'fade', dur: 0.5 } }));
-  clips.push(makeClip('text', { name: 'Lower third', trackId: v2.id, start: 4.5, duration: 4, text: { content: 'Paper dusk\nSample still, drawn in your browser', size: 0.042, weight: 700, align: 'left', bg: true, bgColor: '#e6e0d2', color: '#1c1b19', shadow: false, lineHeight: 1.3 }, transform: { x: 0.3, y: 0.8 }, anim: { in: 'slide', out: 'fade', dur: 0.45 } }));
-  clips.push(makeClip('text', { name: 'Caption', trackId: v2.id, start: 9.5, duration: 4, text: { content: 'Every frame stays on this device.', size: 0.05, weight: 700, bg: true, bgColor: '#141311', shadow: false }, transform: { y: 0.86 }, anim: { in: 'typewriter', out: 'fade', dur: 1.4 } }));
-  clips.push(makeClip('sticker', { name: 'Star', trackId: v3.id, start: 5.2, duration: 3, sticker: { shape: 'star', color: '#d8382b', size: 0.2 }, transform: { x: 0.84, y: 0.2, rotation: 12 }, anim: { in: 'pop', out: 'fade', dur: 0.35 } }));
+  clips.push(makeClip('text', { name: 'Title', trackId: v2.id, start: 0.4, duration: 3.2, text: { content: 'Cutroom', size: 0.16, weight: 900 }, introAnimation: { type: 'pop', duration: 0.5 }, outroAnimation: { type: 'fade', duration: 0.5 } }));
+  clips.push(makeClip('text', { name: 'Lower third', trackId: v2.id, start: 4.5, duration: 4, text: { content: 'Paper dusk\nSample still, drawn in your browser', size: 0.042, weight: 700, align: 'left', bg: true, bgColor: '#e6e0d2', color: '#1c1b19', shadow: false, lineHeight: 1.3 }, transform: { x: 0.3, y: 0.8 }, introAnimation: { type: 'slide', duration: 0.45 }, outroAnimation: { type: 'fade', duration: 0.45 } }));
+  clips.push(makeClip('text', { name: 'Caption', trackId: v2.id, start: 9.5, duration: 4, text: { content: 'Every frame stays on this device.', size: 0.05, weight: 700, bg: true, bgColor: '#141311', shadow: false }, transform: { y: 0.86 }, introAnimation: { type: 'typewriter', duration: 1.4 }, outroAnimation: { type: 'fade', duration: 1.4 } }));
+  clips.push(makeClip('sticker', { name: 'Star', trackId: v3.id, start: 5.2, duration: 3, sticker: { shape: 'star', color: '#d8382b', size: 0.2 }, transform: { x: 0.84, y: 0.2, rotation: 12 }, introAnimation: { type: 'pop', duration: 0.35 }, outroAnimation: { type: 'fade', duration: 0.35 } }));
   clips.push(makeClip('audio', { assetId: whoosh.id, name: whoosh.name, trackId: a1.id, start: Math.max(0, (aVid ? 4 : 0) - 0.7), duration: Math.floor(whoosh.duration * fps) / fps, volume: 0.8 }));
   clips.push(makeClip('audio', { assetId: beat.id, name: beat.name, trackId: a2.id, start: 0, duration: Math.min(Math.floor(beat.duration * fps) / fps, Math.max(t, 6)), volume: 0.85, fadeOut: 2 }));
   p.clips.push(...clips);

@@ -310,6 +310,44 @@ input[type="color"].swatch::-webkit-color-swatch { border: 0; border-radius: 2px
 .beat-form .actions { display: flex; gap: 8px; }
 .beat-form .actions .btn { flex: 1; }
 
+/* Text panel */
+.insp-text-title { margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.insp-sub { margin: 14px 0 8px; font-size: 11.5px; font-weight: 650; color: var(--muted); }
+.insp-sub:first-of-type { margin-top: 0; }
+.insp-hint { font-size: 11.5px; color: var(--faint); }
+.text-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.text-content { font-size: 13.5px; line-height: 1.4; }
+.font-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
+.font-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; min-height: 52px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); color: var(--text); text-align: left;
+  transition: border-color 150ms var(--ease-out), background-color 150ms var(--ease-out);
+}
+.font-chip:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.font-chip[aria-checked="true"] { border-color: var(--bone); background: var(--surface-3); box-shadow: inset 0 -2px 0 var(--bone-deep); }
+.font-chip-aa { font-size: 20px; line-height: 1.1; }
+.font-chip-name { font-size: 10.5px; color: var(--muted); }
+.field.two.with-tail { grid-template-columns: 78px minmax(0, 1fr) auto; }
+.ctl.wrap { flex-wrap: wrap; row-gap: 6px; }
+.color-chip { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid rgba(236, 231, 220, 0.25); background: var(--chip); flex: none; transition: transform 120ms var(--ease-out); }
+.color-chip:hover { transform: scale(1.12); }
+.color-chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--bone); }
+.seg.icons button { display: inline-grid; place-items: center; width: 34px; padding: 0; }
+.seg.icons .i { width: 16px; height: 16px; }
+.align-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 12px; }
+.align-group { display: inline-flex; gap: 1px; padding: 2px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); background: var(--bg); }
+.align-group .icon-btn { width: 28px; height: 26px; }
+.align-group .icon-btn .i { width: 17px; height: 17px; }
+.compact-seg button { height: 22px; padding: 0 7px; font-size: 11px; }
+.anim-note { margin-top: 4px; }
+.inline-text {
+  position: absolute; left: 0; top: 0; margin: 0; border: 0; outline: none; resize: none; overflow: hidden;
+  background: transparent; color: transparent; white-space: pre; box-sizing: border-box; z-index: 5;
+  transform-origin: 50% 50%; font-kerning: normal; text-rendering: auto; letter-spacing: 0; word-spacing: 0;
+  font-variant-ligatures: normal; box-shadow: 0 0 0 1px rgba(245, 241, 232, 0.9), 0 0 0 3px rgba(20, 19, 17, 0.6);
+}
+.inline-text::selection { background: rgba(79, 107, 134, 0.6); color: transparent; }
+
 /* AI voice */
 .voice-status { display: grid; gap: 8px; padding: 10px 12px; margin-bottom: 12px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--border); }
 .voice-status .btn { justify-self: start; }
@@ -486,6 +524,8 @@ input[type="color"].swatch::-webkit-color-swatch { border: 0; border-radius: 2px
 .field-grid { display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; gap: 10px 12px; }
 .field-grid > label, .field-grid > .field-label { font-size: 12.5px; color: var(--muted); }
 .field-grid .check { font-size: 12.5px; }
+.field-grid-row { display: contents; }
+.field-grid-row[hidden] { display: none !important; }
 .dlg-summary { margin: 16px 0 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-mono); font-size: 11.5px; color: var(--text); }
 .dlg-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
 .progress-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: 600; }

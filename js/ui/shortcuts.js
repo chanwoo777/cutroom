@@ -1,7 +1,7 @@
 import { isTypingTarget } from '../util.js';
 import { announce } from './dom.js';
 
-export function installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice }) {
+export function installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice, textEditor }) {
   // Space on a focused button should play/pause, not click the button.
   window.addEventListener('keyup', (e) => {
     if (e.key === ' ' && e.target instanceof HTMLButtonElement && !e.target.closest('dialog')) e.preventDefault();
@@ -19,6 +19,11 @@ export function installShortcuts({ store, actions, playback, timeline, monitor, 
     if (arrows && (t?.type === 'range' || t?.closest?.('[role="tablist"],[role="radiogroup"],select'))) return;
     if ((k === ' ' || k === 'Enter') && t?.closest?.('[role="tablist"]')) return;
     if (k === 'Enter' && (t instanceof HTMLButtonElement || t?.getAttribute?.('role') === 'listitem')) return;
+    if (k === 'Enter' && !e.ctrlKey && !e.metaKey) {
+      // Enter on a selected text clip types into it on the canvas.
+      const sel = store.selectedClips();
+      if (sel.length === 1 && sel[0].kind === 'text') { e.preventDefault(); store.emit('edit-text', sel[0].id); return; }
+    }
 
     const mod = e.ctrlKey || e.metaKey;
     const overlay = monitor.overlayFocused;

@@ -6,7 +6,9 @@ import { LUT_PRESETS, parseCube } from '../engine/luts.js';
 import { SHAPES } from '../engine/stickers.js';
 import {
   TEXT_FONTS, ANIM_IN, ANIM_OUT, DEFAULT_FX, DEFAULT_TRANSFORM, isVisual, isMedia, overwriteRange, clipEnd, maxTimelineDuration,
+  effectiveAnimDurations, MIN_ANIM,
 } from '../core/ops.js';
+import { ALIGN_MODES, alignClips } from './align.js';
 import { FPS_OPTIONS } from '../core/store.js';
 import { loadVoiceSettings, VOICE_LANGS, VOICES } from '../engine/voice.js';
 import { voiceControls, modelStatus, licenseNote, runWithProgress } from './voicepanel.js';
@@ -19,7 +21,9 @@ export const customLuts = [];
 const decimals = (step) => (String(step).split('.')[1] || '').length;
 
 export class Inspector {
-  constructor({ store, assets, glfx, actions, voice, voiceover, audio }) {
+  constructor({ store, assets, glfx, actions, voice, voiceover, audio, renderer }) {
+    this.renderer = renderer;
+    this.alignSafe = false;
     this.store = store;
     this.assets = assets;
     this.glfx = glfx;
@@ -40,7 +44,7 @@ export class Inspector {
       else this.sync();
     });
     store.on('focus-inspector', () => {
-      const ta = this.root.querySelector('textarea, .insp-title input');
+      const ta = this.root.querySelector('.text-content') || this.root.querySelector('.insp-title input');
       ta?.focus();
       ta?.select?.();
     });
@@ -76,16 +80,23 @@ export class Inspector {
     return h('div', { class: cls }, h('label', { for: id, text: label }), control, extra);
   }
 
-  #slider({ label, min, max, step = 1, get, set, commit, def = null, unit = '' }) {
+  #slider({ label, min, max, step = 1, get, set, commit, def = null, unit = '', disabled = null }) {
     const id = uid('f');
-    const range = h('input', { type: 'range', class: 'range', id, min, max, step });
-    const num = h('input', { type: 'number', class: 'num', min, max, step, 'aria-label': `${label}${unit ? ` (${unit})` : ''}` });
+    const maxOf = () => (typeof max === 'function' ? Math.max(min + step, max()) : max);
+    const range = h('input', { type: 'range', class: 'range', id, min, max: maxOf(), step });
+    const num = h('input', { type: 'number', class: 'num', min, max: maxOf(), step, 'aria-label': `${label}${unit ? ` (${unit})` : ''}` });
     const dp = decimals(step);
     const update = () => {
       const v = get();
       if (v == null || Number.isNaN(v)) return;
+      const mx = maxOf();
+      range.max = String(mx);
+      num.max = String(mx);
+      const off = disabled ? !!disabled() : false;
+      range.disabled = off;
+      num.disabled = off;
       range.value = String(v);
-      range.style.setProperty('--p', `${((clamp(v, min, max) - min) / (max - min)) * 100}%`);
+      range.style.setProperty('--p', `${((clamp(v, min, mx) - min) / (mx - min)) * 100}%`);
       if (document.activeElement !== num) num.value = Number(v).toFixed(dp);
     };
     range.addEventListener('input', () => { set(Number(range.value)); this.#touch(); update(); });
@@ -93,7 +104,7 @@ export class Inspector {
     num.addEventListener('change', () => {
       const v = Number(num.value);
       if (!Number.isFinite(v)) { update(); return; }
-      set(clamp(v, min, max));
+      set(clamp(v, min, maxOf()));
       this.#touch();
       this.#commit(commit || label);
       update();
@@ -235,6 +246,7 @@ export class Inspector {
           h('button', { type: 'button', class: 'btn', on: { click: () => A.deleteSelected(false) } }, icon('trash'), h('span', { text: 'Delete' })),
           h('button', { type: 'button', class: 'btn', on: { click: () => A.deleteSelected(true) } }, icon('ripple'), h('span', { text: 'Ripple' }))),
       ]),
+      ...(sel.some(isVisual) ? [this.#section('Align each to the frame', [this.#alignToolbar(() => sel.filter(isVisual).map((c) => c.id))])] : []),
       ...voiceRows,
     ];
   }
@@ -247,12 +259,21 @@ export class Inspector {
     const asset = this.assets.get(clip0.assetId);
     const out = [];
 
-    const nameInput = h('input', { type: 'text', maxlength: 120, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Clip name' });
-    nameInput.value = clip0.name || (clip0.kind === 'text' ? String(clip0.text.content).split('\n')[0] : '');
-    nameInput.addEventListener('change', () => { C().name = nameInput.value.slice(0, 120); this.#commit('Rename clip'); });
-    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
+    const isText = clip0.kind === 'text';
+    const nameInput = isText
+      ? h('h2', { class: 'insp-text-title' })
+      : h('input', { type: 'text', maxlength: 120, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Clip name' });
+    if (!isText) {
+      nameInput.value = clip0.name || '';
+      nameInput.addEventListener('change', () => { C().name = nameInput.value.slice(0, 120); this.#commit('Rename clip'); });
+      nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
+    }
     const sub = h('p', {});
-    const updSub = () => { const c = C(); sub.textContent = `${KIND_LABEL[c.kind]} · ${store.getTrack(c.trackId)?.name || ''} · ${formatTC(c.start, fps())}`; };
+    const updSub = () => {
+      const c = C();
+      if (isText) nameInput.textContent = String(c.text.content || '').split('\n')[0].trim() || 'Empty text';
+      sub.textContent = `${KIND_LABEL[c.kind]} · ${store.getTrack(c.trackId)?.name || ''} · ${formatTC(c.start, fps())}`;
+    };
     this.bindings.push(updSub);
     updSub();
     out.push(this.#head(clip0.kind, h('div', {}, nameInput, sub), null, [
@@ -287,12 +308,16 @@ export class Inspector {
         overwriteRange(store.project, c.trackId, c.start, clipEnd(c), new Set([c.id]), fps());
       }, commit: 'Change speed' }));
     }
-    out.push(this.#section('Timing', timing));
-
-    if (clip0.kind === 'text') out.push(this.#textSection(C));
-    if (clip0.kind === 'text' && this.voice) out.push(this.#voiceSection(C));
+    const timingSec = this.#section('Timing', timing);
+    // Overlays lead with what you edit most: their content and style, then position, then motion.
+    if (clip0.kind === 'text' || clip0.kind === 'sticker') {
+      out.push(clip0.kind === 'text' ? this.#textSection(C) : this.#stickerSection(C));
+      out.push(this.#transformSection(C, clip0), this.#animSection(C, clip0), timingSec);
+      if (clip0.kind === 'text' && this.voice) out.push(this.#voiceSection(C));
+      return out;
+    }
+    out.push(timingSec);
     if (clip0.kind === 'audio' && asset?.source === 'voice') out.push(this.#voiceInfo(C, asset));
-    if (clip0.kind === 'sticker') out.push(this.#stickerSection(C));
     if (isVisual(clip0)) out.push(this.#transformSection(C, clip0));
     if (isVisual(clip0)) out.push(this.#animSection(C, clip0));
     if (isMedia(clip0)) out.push(this.#colorSection(C));
@@ -305,28 +330,70 @@ export class Inspector {
 
   #textSection(C) {
     const T = () => C().text;
-    const ta = h('textarea', { class: 'text-area', rows: 3, spellcheck: 'true', 'aria-label': 'Text content' });
-    const updTa = () => { if (document.activeElement !== ta) ta.value = T().content; };
-    ta.addEventListener('input', () => { T().content = ta.value.slice(0, 2000); this.#touch(); });
+    const id = C().id;
+    // Content: edits show on the canvas as you type; one undo step per editing session.
+    const ta = h('textarea', { class: 'text-area text-content', rows: 2, spellcheck: 'true', 'aria-label': 'Text content', placeholder: 'Type your text' });
+    const grow = () => { ta.rows = Math.min(8, Math.max(2, String(ta.value).split('\n').length)); };
+    const updTa = () => { if (document.activeElement !== ta) { ta.value = T().content; grow(); } };
+    ta.addEventListener('input', () => { T().content = ta.value.slice(0, 2000); grow(); this.#touch(); });
     ta.addEventListener('change', () => this.#commit('Edit text'));
     this.bindings.push(updTa);
     updTa();
-    const alignSeg = this.#segmented({ label: 'Align', options: [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']], get: () => T().align, set: (v) => { T().align = v; }, commit: 'Text align' });
+    const editBtn = h('button', { type: 'button', class: 'btn small', title: 'Edit directly on the canvas (double-click the text, or press Enter)', on: { click: () => this.store.emit('edit-text', id) } }, icon('type'), h('span', { text: 'Edit on canvas' }));
+
+    // Font family: each choice is drawn in its own typeface.
+    const fontBtns = Object.entries(TEXT_FONTS).map(([k, f]) => {
+      const b = h('button', { type: 'button', class: 'font-chip', role: 'radio', title: f.label, on: { click: () => { T().font = k; this.#touch(); this.#commit('Font'); updFonts(); } } },
+        h('span', { class: 'font-chip-aa', text: 'Aa' }), h('span', { class: 'font-chip-name', text: f.label }));
+      b.querySelector('.font-chip-aa').style.setProperty('font-family', f.stack);
+      return [k, b];
+    });
+    const updFonts = () => fontBtns.forEach(([k, b]) => b.setAttribute('aria-checked', String(T().font === k)));
+    this.bindings.push(updFonts);
+    updFonts();
+
+    // Weight + italic
+    const italic = h('button', { type: 'button', class: 'icon-btn', title: 'Italic', 'aria-label': 'Italic', on: { click: () => { T().italic = !T().italic; this.#touch(); this.#commit('Italic'); updItalic(); } } }, icon('italic'));
+    const updItalic = () => italic.setAttribute('aria-pressed', String(!!T().italic));
+    this.bindings.push(updItalic);
+    updItalic();
+    const weight = this.#segmented({ label: 'Weight', options: [[400, 'Regular'], [700, 'Bold'], [900, 'Black']], get: () => T().weight, set: (v) => { T().weight = v; }, commit: 'Font weight' });
+    weight.append(italic);
+    weight.classList.add('with-tail');
+
+    // Colour: swatch plus the palette the editor itself is built from.
+    const PALETTE = ['#ffffff', '#1c1b19', '#e6e0d2', '#d8382b', '#b98a2e', '#4f6b86', '#f2c230'];
+    const chips = PALETTE.map((c) => {
+      const b = h('button', { type: 'button', class: 'color-chip', title: c, 'aria-label': `Text colour ${c}`, on: { click: () => { T().color = c; this.#touch(); this.#commit('Text colour'); this.sync(); } } });
+      b.style.setProperty('--chip', c);
+      return [c, b];
+    });
+    const updChips = () => chips.forEach(([c, b]) => b.setAttribute('aria-pressed', String(String(T().color).toLowerCase() === c)));
+    this.bindings.push(updChips);
+    updChips();
+
+    // Alignment as icons
+    const alignGroup = h('div', { class: 'seg icons', role: 'radiogroup', 'aria-label': 'Text alignment' });
+    const alignBtns = [['left', 'text-left', 'Align text left'], ['center', 'text-center', 'Centre text'], ['right', 'text-right', 'Align text right']].map(([v, ic, lbl]) => {
+      const b = h('button', { type: 'button', role: 'radio', title: lbl, 'aria-label': lbl, on: { click: () => { T().align = v; this.#touch(); this.#commit('Text align'); updAlign(); } } }, icon(ic));
+      return [v, b];
+    });
+    alignBtns.forEach(([, b]) => alignGroup.append(b));
+    const updAlign = () => alignBtns.forEach(([v, b]) => b.setAttribute('aria-checked', String(T().align === v)));
+    this.bindings.push(updAlign);
+    updAlign();
+
+    const row = (label, ...kids) => h('div', { class: 'field two' }, h('span', { class: 'lbl', text: label }), h('div', { class: 'ctl wrap' }, ...kids));
     return this.#section('Text', [
-      h('div', { class: 'field stack' }, ta),
-      this.#select({ label: 'Font', options: Object.entries(TEXT_FONTS).map(([k, f]) => [k, f.label]), get: () => T().font, set: (v) => { T().font = v; }, commit: 'Font' }),
-      this.#segmented({ label: 'Weight', options: [[400, 'Regular'], [700, 'Bold'], [900, 'Black']], get: () => T().weight, set: (v) => { T().weight = v; }, commit: 'Font weight' }),
-      this.#slider({ label: 'Size', min: 2, max: 40, step: 0.5, get: () => T().size * 100, set: (v) => { T().size = v / 100; }, commit: 'Text size', unit: '% of short side' }),
-      h('div', { class: 'field two' }, h('span', { class: 'lbl', text: 'Colour' }), h('div', { class: 'ctl' },
-        this.#color({ label: 'Text colour', get: () => T().color, set: (v) => { T().color = v; }, commit: 'Text colour' }),
-        this.#check({ label: 'Italic', get: () => T().italic, set: (v) => { T().italic = v; }, commit: 'Italic' }),
-        this.#check({ label: 'Shadow', get: () => T().shadow, set: (v) => { T().shadow = v; }, commit: 'Text shadow' }))),
-      alignSeg,
+      h('div', { class: 'field stack' }, ta, h('div', { class: 'text-edit-row' }, editBtn, h('span', { class: 'insp-hint', text: 'Or double-click the text on the canvas.' }))),
+      h('div', { class: 'font-grid', role: 'radiogroup', 'aria-label': 'Font' }, ...fontBtns.map(([, b]) => b)),
+      this.#slider({ label: 'Size', min: 8, max: 360, step: 1, get: () => Math.round(T().size * 1080), set: (v) => { T().size = v / 1080; }, commit: 'Text size', unit: 'px at 1080p', def: 97 }),
+      weight,
+      row('Colour', this.#color({ label: 'Text colour', get: () => T().color, set: (v) => { T().color = v; }, commit: 'Text colour' }), ...chips.map(([, b]) => b)),
+      h('div', { class: 'field two' }, h('span', { class: 'lbl', text: 'Align' }), alignGroup),
+      row('Box', this.#check({ label: 'Background', get: () => T().bg, set: (v) => { T().bg = v; }, commit: 'Text box' }), this.#color({ label: 'Box colour', get: () => T().bgColor, set: (v) => { T().bgColor = v; T().bg = true; }, commit: 'Box colour' })),
       this.#slider({ label: 'Outline', min: 0, max: 10, step: 0.5, get: () => T().strokeWidth, set: (v) => { T().strokeWidth = v; }, commit: 'Outline width', def: 0 }),
-      h('div', { class: 'field two' }, h('span', { class: 'lbl', text: 'Outline / box' }), h('div', { class: 'ctl' },
-        this.#color({ label: 'Outline colour', get: () => T().strokeColor, set: (v) => { T().strokeColor = v; }, commit: 'Outline colour' }),
-        this.#check({ label: 'Box', get: () => T().bg, set: (v) => { T().bg = v; }, commit: 'Text box' }),
-        this.#color({ label: 'Box colour', get: () => T().bgColor, set: (v) => { T().bgColor = v; }, commit: 'Box colour' }))),
+      row('Outline · shadow', this.#color({ label: 'Outline colour', get: () => T().strokeColor, set: (v) => { T().strokeColor = v; if (!T().strokeWidth) T().strokeWidth = 2; }, commit: 'Outline colour' }), this.#check({ label: 'Shadow', get: () => T().shadow, set: (v) => { T().shadow = v; }, commit: 'Text shadow' })),
       this.#slider({ label: 'Line height', min: 0.8, max: 2, step: 0.02, get: () => T().lineHeight, set: (v) => { T().lineHeight = v; }, commit: 'Line height', def: 1.12 }),
     ]);
   }
@@ -413,9 +480,31 @@ export class Inspector {
     return this.#section('Sticker', rows);
   }
 
+  /** Six align buttons (frame or title-safe area) acting on the given clips. */
+  #alignToolbar(ids) {
+    const run = (mode, label) => {
+      const n = alignClips(this.store, this.renderer, ids(), mode, { safe: this.alignSafe });
+      if (n) { this.#touch(); this.#commit(label); this.sync(); }
+    };
+    const btns = ALIGN_MODES.map(([mode, label, ic]) => h('button', { type: 'button', class: 'icon-btn', title: label, 'aria-label': label, on: { click: () => run(mode, label) } }, icon(ic)));
+    const safeSeg = h('div', { class: 'seg compact-seg', role: 'radiogroup', 'aria-label': 'Align relative to' });
+    const opts = [[false, 'Frame'], [true, 'Safe area']].map(([v, t]) => h('button', {
+      type: 'button', role: 'radio', text: t, title: v ? 'Align inside the 5% title-safe margin' : 'Align to the frame edges',
+      on: { click: () => { this.alignSafe = v; upd(); } },
+    }));
+    opts.forEach((b) => safeSeg.append(b));
+    const upd = () => opts.forEach((b, i) => b.setAttribute('aria-checked', String(i === 1 ? this.alignSafe : !this.alignSafe)));
+    upd();
+    return h('div', { class: 'align-bar' },
+      h('div', { class: 'align-group', role: 'group', 'aria-label': 'Horizontal alignment' }, ...btns.slice(0, 3)),
+      h('div', { class: 'align-group', role: 'group', 'aria-label': 'Vertical alignment' }, ...btns.slice(3)),
+      safeSeg);
+  }
+
   #transformSection(C, clip0) {
     const T = () => C().transform;
     const rows = [
+      this.#alignToolbar(() => [C().id]),
       this.#slider({ label: 'Position X', min: -50, max: 150, step: 0.1, get: () => T().x * 100, set: (v) => { T().x = v / 100; }, commit: 'Position', def: 50, unit: '%' }),
       this.#slider({ label: 'Position Y', min: -50, max: 150, step: 0.1, get: () => T().y * 100, set: (v) => { T().y = v / 100; }, commit: 'Position', def: 50, unit: '%' }),
       this.#slider({ label: 'Scale', min: 5, max: 500, step: 1, get: () => T().scale * 100, set: (v) => { T().scale = v / 100; }, commit: 'Scale', def: 100, unit: '%' }),
@@ -426,16 +515,45 @@ export class Inspector {
       rows.push(this.#segmented({ label: 'Fit', options: [['contain', 'Fit'], ['cover', 'Fill']], get: () => C().fit, set: (v) => { C().fit = v; }, commit: 'Fit' }));
       rows.push(this.#select({ label: 'Motion', options: [['none', 'None'], ['zoom-in', 'Slow zoom in'], ['zoom-out', 'Slow zoom out']], get: () => C().motion, set: (v) => { C().motion = v; }, commit: 'Motion' }));
     }
-    return this.#section('Transform', rows, this.#linkBtn('Reset', () => { C().transform = DEFAULT_TRANSFORM(); this.#touch(); this.#commit('Reset transform'); this.sync(); }));
+    return this.#section('Position & alignment', rows, this.#linkBtn('Reset', () => { C().transform = DEFAULT_TRANSFORM(); this.#touch(); this.#commit('Reset transform'); this.sync(); }));
   }
 
+  /**
+   * Independent entrance and exit. Each duration is limited so that intro + outro never exceeds the
+   * clip; the entrance runs over [0, intro] and the exit over [end - outro, end].
+   */
   #animSection(C, clip0) {
-    const Aa = () => C().anim;
+    const I = () => C().introAnimation;
+    const O = () => C().outroAnimation;
+    const active = (a) => a.type && a.type !== 'none';
+    const room = (other) => Math.max(MIN_ANIM, C().duration - (active(other()) ? other().duration : 0));
     const inOpts = clip0.kind === 'text' ? ANIM_IN : ANIM_IN.filter(([k]) => k !== 'typewriter');
+    const note = h('p', { class: 'insp-note anim-note' });
+    const updNote = () => {
+      const c = C();
+      const eff = effectiveAnimDurations(c);
+      const parts = [];
+      if (eff.intro) parts.push(`In plays 0–${eff.intro.toFixed(2)} s`);
+      if (eff.outro) parts.push(`out plays ${(c.duration - eff.outro).toFixed(2)}–${c.duration.toFixed(2)} s`);
+      note.textContent = parts.length ? `${parts.join(', ')} of this ${c.duration.toFixed(2)} s clip.` : 'No entrance or exit animation.';
+    };
+    this.bindings.push(updNote);
+    updNote();
+    const setDur = (a, other) => (v) => { a().duration = clamp(v, MIN_ANIM, room(other)); };
     return this.#section('Animation', [
-      this.#select({ label: 'In', options: inOpts, get: () => Aa().in, set: (v) => { Aa().in = v; }, commit: 'Animation in' }),
-      this.#select({ label: 'Out', options: ANIM_OUT, get: () => Aa().out, set: (v) => { Aa().out = v; }, commit: 'Animation out' }),
-      this.#slider({ label: 'Duration', min: 0.1, max: 3, step: 0.05, get: () => Aa().dur, set: (v) => { Aa().dur = v; }, commit: 'Animation duration', def: 0.5, unit: 'seconds' }),
+      h('h4', { class: 'insp-sub', text: 'Beginning (in)' }),
+      this.#select({ label: 'Effect', options: inOpts, get: () => I().type, set: (v) => {
+        I().type = v;
+        if (v !== 'none') I().duration = clamp(I().duration || 0.5, MIN_ANIM, room(O));
+      }, commit: 'Intro animation' }),
+      this.#slider({ label: 'Duration', min: 0.05, max: () => Math.min(10, room(O)), step: 0.05, get: () => I().duration, set: setDur(I, O), commit: 'Intro duration', def: 0.5, unit: 'seconds', disabled: () => !active(I()) }),
+      h('h4', { class: 'insp-sub', text: 'Ending (out)' }),
+      this.#select({ label: 'Effect', options: ANIM_OUT, get: () => O().type, set: (v) => {
+        O().type = v;
+        if (v !== 'none') O().duration = clamp(O().duration || 0.5, MIN_ANIM, room(I));
+      }, commit: 'Outro animation' }),
+      this.#slider({ label: 'Duration', min: 0.05, max: () => Math.min(10, room(I)), step: 0.05, get: () => O().duration, set: setDur(O, I), commit: 'Outro duration', def: 0.5, unit: 'seconds', disabled: () => !active(O()) }),
+      note,
     ]);
   }
 

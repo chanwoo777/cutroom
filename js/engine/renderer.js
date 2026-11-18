@@ -2,22 +2,27 @@
 // Picture tracks render bottom (V1) to top. Media goes through the WebGL2 grade; text and stickers are
 // drawn with Canvas 2D (fillText), so user text never touches the DOM as markup.
 import { clamp, easeOutCubic, easeOutBack, roundRectPath } from '../util.js';
-import { activeClipAt, TEXT_FONTS } from '../core/ops.js';
+import { activeClipAt, TEXT_FONTS, effectiveAnimDurations, migrateClip } from '../core/ops.js';
 import { drawSticker, stickerAspect } from './stickers.js';
 import { FALLBACK_FILTERS } from './luts.js';
 
 export function fontString(T, px) {
   const stack = TEXT_FONTS[T.font]?.stack || TEXT_FONTS.grotesk.stack;
-  return `${T.italic ? 'italic ' : ''}${T.weight || 700} ${px.toFixed(1)}px ${stack}`;
+  return `${T.italic ? 'italic ' : ''}${T.weight || 700} ${px.toFixed(2)}px ${stack}`;
 }
 
-/** Entrance/exit animation and Ken Burns motion at time t. dy is a fraction of the frame's short side. */
+const IDENTITY_ANIM = Object.freeze({ alpha: 1, scale: 1, dy: 0, reveal: 1 });
+
+/**
+ * Entrance/exit animation and Ken Burns motion at time t. dy is a fraction of the frame's short side.
+ * The entrance interpolates strictly over [0, intro]; the exit over [D - outro, D].
+ */
 export function computeAnim(clip, t) {
+  if (clip.anim) migrateClip(clip);
   const local = t - clip.start;
   const D = clip.duration;
   const res = { alpha: 1, scale: 1, dy: 0, reveal: 1 };
-  const a = clip.anim || {};
-  const d = Math.max(0.05, Math.min(a.dur || 0.5, D / 2));
+  const { intro, outro } = effectiveAnimDurations(clip);
   const apply = (type, p, isIn) => {
     if (!type || type === 'none' || p >= 1) return;
     const q = clamp(p, 0, 1);
@@ -31,8 +36,8 @@ export function computeAnim(clip, t) {
       default: break;
     }
   };
-  if (a.in && a.in !== 'none') apply(a.in, local / (a.in === 'typewriter' ? Math.min(a.dur || 1, D) : d), true);
-  if (a.out && a.out !== 'none') apply(a.out, (D - local) / d, false);
+  if (intro > 0 && local < intro) apply(clip.introAnimation.type, local / intro, true);
+  if (outro > 0 && local > D - outro) apply(clip.outroAnimation.type, (D - local) / outro, false);
   if (clip.motion === 'zoom-in') res.scale *= 1 + 0.15 * clamp(local / D, 0, 1);
   else if (clip.motion === 'zoom-out') res.scale *= 1.15 - 0.15 * clamp(local / D, 0, 1);
   return res;
@@ -62,6 +67,22 @@ export class Renderer {
     m.width = m.height = 4;
     this.mctx = m.getContext('2d');
     this.posterKeys = new Set();
+    this.editingId = null; // text clip being edited inline: drawn without animation so the caret lines up
+    this.fontMetrics = new Map();
+  }
+
+  /** CSS-equivalent ascent/descent for a font, so canvas lines sit exactly where a textarea puts them. */
+  #fontBox(font) {
+    let fm = this.fontMetrics.get(font);
+    if (fm) return fm;
+    const ctx = this.mctx;
+    ctx.font = font;
+    ctx.textBaseline = 'alphabetic';
+    const m = ctx.measureText('Hgjy가');
+    fm = Number.isFinite(m.fontBoundingBoxAscent) ? { asc: m.fontBoundingBoxAscent, desc: m.fontBoundingBoxDescent } : null;
+    if (this.fontMetrics.size > 200) this.fontMetrics.clear();
+    this.fontMetrics.set(font, fm);
+    return fm;
   }
 
   resize(w, h) {
@@ -72,18 +93,63 @@ export class Renderer {
 
   get size() { return [this.canvas.width, this.canvas.height]; }
 
+  /**
+   * Text box metrics plus the ink rectangle (box-local, unscaled) that alignment and snapping use, so a
+   * caption without a background box aligns by its visible glyphs rather than by line-height padding.
+   */
   measureText(T, S) {
     const px = Math.max(4, (T.size || 0.09) * S);
     const ctx = this.mctx;
-    ctx.font = fontString(T, px);
+    const font = fontString(T, px);
+    ctx.font = font;
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
     const lines = String(T.content ?? '').split('\n');
-    const widths = lines.map((l) => ctx.measureText(l || ' ').width);
+    const measures = lines.map((l) => ctx.measureText(l || ' '));
+    const widths = measures.map((m) => m.width);
     const maxW = Math.max(1, ...widths);
     const lineH = px * (T.lineHeight || 1.12);
     const strokePad = (T.strokeWidth || 0) * px * 0.06;
     const padX = (T.bg ? px * 0.42 : px * 0.08) + strokePad;
     const padY = (T.bg ? px * 0.22 : px * 0.04) + strokePad;
-    return { px, lines, widths, maxW, lineH, padX, padY, w: maxW + padX * 2, h: lines.length * lineH + padY * 2 };
+    const w = maxW + padX * 2, h = lines.length * lineH + padY * 2;
+    const fm = this.#fontBox(font);
+    // Baseline of line i, measured from the top of the box: identical to a CSS line box of height lineH.
+    const baseline = (i) => padY + lineH * i + lineH / 2 + (fm ? (fm.asc - fm.desc) / 2 : 0);
+    const lineX = (i) => (T.align === 'left' ? padX : T.align === 'right' ? w - padX - widths[i] : (w - widths[i]) / 2);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    measures.forEach((m, i) => {
+      if (!lines[i].trim()) return;
+      const lx = lineX(i), by = baseline(i);
+      const l = Number.isFinite(m.actualBoundingBoxLeft) ? lx - m.actualBoundingBoxLeft : lx;
+      const r = Number.isFinite(m.actualBoundingBoxRight) ? lx + m.actualBoundingBoxRight : lx + m.width;
+      const a = Number.isFinite(m.actualBoundingBoxAscent) ? by - m.actualBoundingBoxAscent : by - px * 0.8;
+      const d = Number.isFinite(m.actualBoundingBoxDescent) ? by + m.actualBoundingBoxDescent : by + px * 0.2;
+      x0 = Math.min(x0, l); x1 = Math.max(x1, r); y0 = Math.min(y0, a); y1 = Math.max(y1, d);
+    });
+    let ink = null;
+    if (!T.bg && Number.isFinite(x0)) {
+      ink = { x0: x0 - strokePad - w / 2, y0: y0 - strokePad - h / 2, x1: x1 + strokePad - w / 2, y1: y1 + strokePad - h / 2 };
+    }
+    return { px, font, lines, widths, maxW, lineH, padX, padY, w, h, baseline, lineX, cssMatched: !!fm, ink };
+  }
+
+  /**
+   * Axis-aligned bounds of what the layer visibly covers in W x H pixels, after scale and rotation
+   * (animation excluded). Text without a box uses its ink; everything else its full box.
+   */
+  visualBounds(clip, W, H) {
+    const L = this.layout(clip, W, H);
+    const s = clip.transform.scale ?? 1;
+    const ink = L.metrics?.ink;
+    const r = ink ? { x0: ink.x0 * s, y0: ink.y0 * s, x1: ink.x1 * s, y1: ink.y1 * s } : { x0: -L.w / 2, y0: -L.h / 2, x1: L.w / 2, y1: L.h / 2 };
+    const c = Math.cos(L.rot), sn = Math.sin(L.rot);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [x, y] of [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]]) {
+      const X = L.cx + x * c - y * sn, Y = L.cy + x * sn + y * c;
+      minX = Math.min(minX, X); maxX = Math.max(maxX, X); minY = Math.min(minY, Y); maxY = Math.max(maxY, Y);
+    }
+    return { minX, maxX, minY, maxY, cx: L.cx, cy: L.cy };
   }
 
   /** Base (unscaled) box and the scaled layout used by hit-testing and handles. Frame pixel units. */
@@ -117,6 +183,9 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     ctx.filter = 'none';
+    // Every scaled draw (GL result, stills, stickers) uses the browser's best resampler.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     const bg = project.background || { mode: 'black' };
     ctx.fillStyle = bg.mode === 'color' ? bg.color : '#000000';
     ctx.fillRect(0, 0, W, H);
@@ -155,7 +224,11 @@ export class Renderer {
     const { ctx, glfx } = this;
     const fx = clip.fx;
     if (glfx && !glfx.lost) {
-      if (src.fresh && src.source) glfx.upload(src.key, src.source, { mipmap: !!src.still });
+      // Mipmaps (trilinear filtering) whenever the source is drawn noticeably smaller than its native size,
+      // e.g. a 4K clip in a 1080p export or picture-in-picture, so fine detail does not alias.
+      const srcW = src.asset.width || bw;
+      const minify = bw * pixelScale < srcW * 0.75;
+      if (src.fresh && src.source) glfx.upload(src.key, src.source, { mipmap: !!src.still || minify });
       if (!glfx.hasTex(src.key)) return;
       const blurPx = (fx.blur || 0) * (Math.min(W, H) / 1080);
       const r = glfx.process(src.key, fx, bw * pixelScale, bh * pixelScale, blurPx * Math.min(1, pixelScale));
@@ -193,7 +266,7 @@ export class Renderer {
     const L = this.layout(clip, W, H);
     this.layouts.set(clip.id, L);
     if (L.bw <= 0 || L.bh <= 0) return;
-    const A = computeAnim(clip, t);
+    const A = clip.id === this.editingId ? IDENTITY_ANIM : computeAnim(clip, t);
     const alpha = clamp((clip.transform.opacity ?? 1) * A.alpha, 0, 1);
     if (alpha <= 0.002) return;
     const S = Math.min(W, H);
@@ -212,8 +285,9 @@ export class Renderer {
 
   #drawText(T, m, reveal) {
     const { ctx } = this;
-    ctx.font = fontString(T, m.px);
-    ctx.textBaseline = 'middle';
+    ctx.font = m.font;
+    // Alphabetic baselines placed exactly where a CSS line box would put them (see measureText).
+    ctx.textBaseline = m.cssMatched ? 'alphabetic' : 'middle';
     const W2 = m.w / 2, H2 = m.h / 2;
     if (T.bg) {
       ctx.fillStyle = T.bgColor || '#1c1b19';
@@ -231,7 +305,7 @@ export class Renderer {
         if (line.length > remaining) { line = line.slice(0, remaining); partial = true; }
         remaining -= full.length;
       }
-      const y = -H2 + m.padY + m.lineH * (i + 0.5);
+      const y = m.cssMatched ? -H2 + m.baseline(i) : -H2 + m.padY + m.lineH * (i + 0.5);
       let x;
       if (partial || T.align === 'left') {
         // Typewriter text grows from the left edge of where the finished line will sit.

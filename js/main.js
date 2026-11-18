@@ -17,6 +17,7 @@ import { buildDemo } from './demo.js';
 import { clamp, formatBytes } from './util.js';
 import { VoiceEngine, loadVoiceSettings } from './engine/voice.js';
 import { createVoiceover } from './voice/voiceover.js';
+import { InlineTextEditor } from './ui/texteditor.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,14 +33,34 @@ const playback = new Playback({ store, assets, audio, glfx, pool: $('media-pool'
 const renderer = new Renderer({ canvas: $('program'), store, assets, playback, glfx });
 const actions = createActions({ store, assets, playback, glfx });
 
-function applyCanvasSize() {
+/**
+ * Preview resolution. "Auto" renders the program canvas at the monitor's real device-pixel size (never
+ * above the sequence resolution), so the browser never resamples it with CSS and the picture stays sharp.
+ * Exports always resize the canvas to the full export resolution.
+ */
+let lastDisplayW = 0;
+function sizeProgram(displayW = lastDisplayW) {
+  lastDisplayW = displayW;
   if (store.exporting) return;
   const [W, H] = store.dims;
-  const s = store.ui.previewScale;
-  renderer.resize(Math.round(W * s), Math.round(H * s));
-  monitor.layout();
+  const q = store.ui.previewScale;
+  let w, h;
+  if (q === 'auto') {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    w = Math.max(2, Math.min(W, Math.round((displayW || W) * dpr)));
+    h = Math.max(2, Math.round((w * H) / W));
+  } else {
+    w = Math.round(W * q);
+    h = Math.round(H * q);
+  }
+  renderer.resize(w, h);
   markDirty();
 }
+function applyCanvasSize() {
+  if (store.exporting) return;
+  monitor.layout(); // recomputes the display box, then calls sizeProgram
+}
+matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener?.('change', () => applyCanvasSize());
 
 const voice = new VoiceEngine();
 const voiceover = createVoiceover({ store, assets, voice });
@@ -67,14 +88,15 @@ async function voiceSelected() {
   }
 }
 
-const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize });
+const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize, onResize: (dw) => sizeProgram(dw) });
+const textEditor = new InlineTextEditor({ store, renderer, monitor, playback });
 const timeline = new Timeline({ store, assets, playback, actions, onVoice: voiceSelected });
-const inspector = new Inspector({ store, assets, glfx, actions, voice, voiceover, audio });
+const inspector = new Inspector({ store, assets, glfx, actions, voice, voiceover, audio, renderer });
 const bin = new MediaBin({ store, assets, audio, actions, voice, voiceover });
-const exporter = new ExportDialog({ store, renderer, playback, audio, blobs, monitor, applyCanvasSize });
+const exporter = new ExportDialog({ store, assets, renderer, playback, audio, blobs, monitor, applyCanvasSize });
 const shortcutsDialog = $('shortcuts-dialog');
 shortcutsDialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => shortcutsDialog.close()));
-installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice: voiceSelected });
+installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice: voiceSelected, textEditor });
 applyCanvasSize();
 
 // ---------- app bar ----------
@@ -234,12 +256,16 @@ window.addEventListener('pagehide', () => blobs.revokeAll());
 // ---------- frame loop ----------
 function frame() {
   try {
-    playback.update();
-    if (renderDirty || playback.playing) {
-      renderer.render(store.time);
-      renderDirty = false;
-      monitor.dirty = true;
+    // During a frame-accurate export the exporter owns the videos and the program canvas.
+    if (!playback.suspended) {
+      playback.update();
+      if (renderDirty || playback.playing) {
+        renderer.render(store.time);
+        renderDirty = false;
+        monitor.dirty = true;
+      }
     }
+    textEditor.frame();
     monitor.frame();
     timeline.frame();
     if (playback.playing) {
@@ -256,4 +282,4 @@ function frame() {
 requestAnimationFrame(frame);
 
 // Exposed for debugging in the console only; holds no secrets.
-window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx, voice, voiceover };
+window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx, voice, voiceover, textEditor };

@@ -109,7 +109,7 @@ export class AssetStore extends Emitter {
     try {
       asset.url = this.blobs.create(file, name);
       if (kind === 'video') await this.#loadVideo(asset, file);
-      else if (kind === 'image') await this.#loadImage(asset);
+      else if (kind === 'image') await this.#loadImage(asset, file);
       else await this.#loadAudio(asset, file);
       if (!this.items.has(asset.id)) return null; // removed while loading
       asset.status = 'ready';
@@ -186,15 +186,21 @@ export class AssetStore extends Emitter {
     }
   }
 
-  async #loadImage(asset) {
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = asset.url;
-    await img.decode();
-    asset.width = img.naturalWidth;
-    asset.height = img.naturalHeight;
-    asset.img = img;
-    const bmp = await createImageBitmap(img);
+  async #loadImage(asset, file) {
+    // createImageBitmap decodes off the main thread and does not wait for the page to paint
+    // (HTMLImageElement.decode() can stall in a background tab). EXIF orientation is applied.
+    let bmp = null;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { bmp = null; }
+    if (!bmp) {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = asset.url;
+      await img.decode();
+      bmp = await createImageBitmap(img);
+    }
+    asset.width = bmp.width;
+    asset.height = bmp.height;
+    asset.img = null;
     asset.poster = bmp;
     asset.thumbs = [{ t: 0, bmp }];
   }

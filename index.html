@@ -56,6 +56,16 @@
   <symbol id="i-new" viewBox="0 0 24 24"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/><path d="M12 11.5v6M9 14.5h6"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-italic" viewBox="0 0 24 24"><path d="M14 4.5h5M5 19.5h5M15.5 4.5l-7 15"/></symbol>
+  <symbol id="i-text-left" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></symbol>
+  <symbol id="i-text-center" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></symbol>
+  <symbol id="i-text-right" viewBox="0 0 24 24"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></symbol>
+  <symbol id="i-align-left" viewBox="0 0 24 24"><path d="M4 3.5v17"/><rect x="7.5" y="6.5" width="12" height="4" rx="1"/><rect x="7.5" y="13.5" width="7" height="4" rx="1"/></symbol>
+  <symbol id="i-align-hcenter" viewBox="0 0 24 24"><path d="M12 3.5v17"/><rect x="5.5" y="6.5" width="13" height="4" rx="1"/><rect x="8" y="13.5" width="8" height="4" rx="1"/></symbol>
+  <symbol id="i-align-right" viewBox="0 0 24 24"><path d="M20 3.5v17"/><rect x="4.5" y="6.5" width="12" height="4" rx="1"/><rect x="9.5" y="13.5" width="7" height="4" rx="1"/></symbol>
+  <symbol id="i-align-top" viewBox="0 0 24 24"><path d="M3.5 4h17"/><rect x="6.5" y="7.5" width="4" height="12" rx="1"/><rect x="13.5" y="7.5" width="4" height="7" rx="1"/></symbol>
+  <symbol id="i-align-vmiddle" viewBox="0 0 24 24"><path d="M3.5 12h17"/><rect x="6.5" y="5.5" width="4" height="13" rx="1"/><rect x="13.5" y="8" width="4" height="8" rx="1"/></symbol>
+  <symbol id="i-align-bottom" viewBox="0 0 24 24"><path d="M3.5 20h17"/><rect x="6.5" y="4.5" width="4" height="12" rx="1"/><rect x="13.5" y="9.5" width="4" height="7" rx="1"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21M8.5 21h7"/></symbol>
   <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
 </svg>
@@ -133,10 +143,10 @@
           <button type="button" class="icon-btn" id="tp-loop" aria-label="Loop playback" aria-pressed="false"><svg class="i"><use href="#i-loop"/></svg></button>
           <button type="button" class="icon-btn" id="tp-guides" aria-label="Safe-zone guides (G)" aria-pressed="false"><svg class="i"><use href="#i-guides"/></svg></button>
           <label class="sr-only" for="tp-quality">Preview quality</label>
-          <select id="tp-quality" class="select compact" title="Preview quality">
+          <select id="tp-quality" class="select compact" title="Preview resolution. Auto renders at your screen's real pixel size for the sharpest picture; exports always render at full resolution.">
+            <option value="auto">Auto · sharp</option>
             <option value="1">Full</option>
             <option value="0.5">Half</option>
-            <option value="0.25">Quarter</option>
           </select>
           <div class="volume">
             <label class="sr-only" for="tp-volume">Master volume</label>
@@ -213,6 +223,8 @@
   </div>
   <div class="dlg-body" id="export-settings">
     <div class="field-grid">
+      <label for="ex-engine">Engine</label>
+      <select id="ex-engine" class="select"></select>
       <label for="ex-res">Resolution</label>
       <select id="ex-res" class="select"></select>
       <label for="ex-fps">Frame rate</label>
@@ -225,11 +237,13 @@
         <button type="button" role="radio" data-q="standard" aria-checked="true">Standard</button>
         <button type="button" role="radio" data-q="high" aria-checked="false">High</button>
       </div>
-      <span class="field-label">Audio</span>
-      <label class="check"><input type="checkbox" id="ex-monitor"> <span>Play audio while exporting</span></label>
+      <div class="field-grid-row" id="ex-monitor-row">
+        <span class="field-label">Audio</span>
+        <label class="check"><input type="checkbox" id="ex-monitor"> <span>Play audio while exporting</span></label>
+      </div>
     </div>
     <p class="dlg-summary tabular" id="ex-summary"></p>
-    <p class="dlg-note">Rendering runs in real time on this device and never touches a server. Keep this tab visible until it finishes.</p>
+    <p class="dlg-note" id="ex-note"></p>
   </div>
   <div class="dlg-body" id="export-progress" hidden>
     <div class="progress-row"><span id="ex-phase">Rendering</span><span class="tabular" id="ex-pct">0%</span></div>
@@ -267,6 +281,9 @@
       <div><dt><kbd>=</kbd> <kbd>-</kbd></dt><dd>Zoom timeline (Shift+Z fits)</dd></div>
       <div><dt><kbd>G</kbd></dt><dd>Safe-zone guides</dd></div>
       <div><dt><kbd>T</kbd></dt><dd>AI voice-over for selected text</dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd>Type into the selected text on the canvas</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>Enter</kbd></dt><dd>Finish editing text (Esc cancels)</dd></div>
+      <div><dt><kbd>Alt</kbd> + drag</dt><dd>Move a layer without snapping</dd></div>
       <div><dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt><dd>Export</dd></div>
       <div><dt><kbd>Esc</kbd></dt><dd>Cancel drag · clear selection</dd></div>
     </dl>

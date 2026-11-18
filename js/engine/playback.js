@@ -22,6 +22,7 @@ export class Playback {
     this.anchorT = 0;
     this.anchorClock = 0;
     this.drift = 0;
+    this.suspended = false; // true while the frame-accurate exporter drives the videos
   }
 
   clockNow() { return this.useAudioClock ? this.audio.ctx.currentTime : performance.now() / 1000; }
@@ -227,6 +228,59 @@ export class Playback {
   }
 
   releaseAll() { for (const id of [...this.videos.keys()]) this.release(id); }
+
+  /**
+   * Frame-accurate positioning for offline export: every video visible at t is paused and seeked to the
+   * exact source time, and we wait for its decoded frame. Event-driven (no timers), so it keeps working
+   * in a background tab. Resolves to the number of videos that had to seek.
+   */
+  async exactFrame(t, fps) {
+    const { project } = this.store;
+    const tracks = new Map(project.tracks.map((tr) => [tr.id, tr]));
+    const waits = [];
+    for (const c of project.clips) {
+      if (c.kind !== 'video') continue;
+      const tr = tracks.get(c.trackId);
+      const asset = this.assets.get(c.assetId);
+      if (!tr || tr.hidden || !asset || asset.status !== 'ready' || t < c.start || t >= c.start + c.duration) continue;
+      const v = this.#ensure(c, asset);
+      if (!v.paused) v.pause();
+      // Aim slightly inside the frame so float error never lands on the previous frame's boundary.
+      const target = Math.min(c.in + (t - c.start) * c.speed + 0.25 / fps, (Number.isFinite(v.duration) ? v.duration : Infinity) - 0.001);
+      waits.push(this.#seekExact(v, target, fps));
+    }
+    const n = (await Promise.all(waits)).filter(Boolean).length;
+    // Drop decoders for clips that are behind us so long exports do not pile up video elements.
+    for (const c of project.clips) if (c.kind === 'video' && c.start + c.duration < t - 1) this.release(c.id);
+    return n;
+  }
+
+  #seekExact(v, target, fps) {
+    return new Promise((resolve) => {
+      const st = v._cr;
+      st.seeking = false;
+      st.pending = null;
+      const done = (seeked) => { cleanup(); resolve(seeked); };
+      let timer = 0;
+      const onSeeked = () => { if (v.readyState >= 2) done(true); else v.addEventListener('canplay', onCan, { once: true }); };
+      const onCan = () => done(true);
+      const onMeta = () => start();
+      const cleanup = () => {
+        clearTimeout(timer);
+        v.removeEventListener('seeked', onSeeked);
+        v.removeEventListener('loadedmetadata', onMeta);
+        v.removeEventListener('canplay', onCan);
+      };
+      const start = () => {
+        if (Math.abs(v.currentTime - target) < 0.2 / fps && v.readyState >= 2) { done(false); return; }
+        v.addEventListener('seeked', onSeeked);
+        v.currentTime = target;
+      };
+      timer = setTimeout(() => done(false), 8000); // a broken file must not hang the export
+      if (v.readyState < 1) v.addEventListener('loadedmetadata', onMeta, { once: true });
+      else start();
+    });
+  }
 
   /** Wait until every video visible at t has a decoded frame (used before export starts). */
   async prepareAt(t, timeoutMs = 5000) {

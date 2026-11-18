@@ -2,7 +2,7 @@
 // playhead, snap line, razor guide and marquee (redrawn every frame while playing). A native scroller
 // underneath provides the scroll extents and scrollbars; the canvases draw at its scroll offset.
 import { clamp, quantize, formatTC, cssVar, roundRectPath, easeOutExpo, reducedMotion } from '../util.js';
-import { clipEnd, overwriteRange, trackKindFor, linkedClips } from '../core/ops.js';
+import { clipEnd, overwriteRange, trackKindFor, linkedClips, effectiveAnimDurations, isVisual } from '../core/ops.js';
 import { drawSticker } from '../engine/stickers.js';
 import { h, icon, sizeCanvas, announce } from './dom.js';
 
@@ -131,7 +131,10 @@ export class Timeline {
     canvas.addEventListener('dblclick', (e) => {
       const p = this.local(e);
       const hit = this.hitTest(p.x, p.y);
-      if (hit.clip) { store.select([hit.clip.id]); store.emit('focus-inspector', hit.clip.id); }
+      if (!hit.clip) return;
+      store.select([hit.clip.id]);
+      if (hit.clip.kind === 'text') store.emit('edit-text', hit.clip.id);
+      else store.emit('focus-inspector', hit.clip.id);
     });
 
     ruler.addEventListener('pointerdown', (e) => {
@@ -747,12 +750,30 @@ export class Timeline {
       }
     }
     if (pal.band) { ctx.fillStyle = pal.band; ctx.fillRect(x, y, w, LABEL_H); }
+    if (isVisual(clip)) {
+      // Entrance / exit ramps in the label band, each exactly as long as its own duration.
+      const { intro, outro } = effectiveAnimDurations(clip);
+      const onDark = pal.label === c.bone;
+      ctx.fillStyle = onDark ? 'rgba(236,231,220,0.26)' : 'rgba(28,27,25,0.2)';
+      ctx.strokeStyle = onDark ? 'rgba(236,231,220,0.7)' : 'rgba(28,27,25,0.55)';
+      ctx.lineWidth = 1;
+      if (intro > 0) {
+        const iw = Math.min(w, intro * this.zoom);
+        ctx.beginPath(); ctx.moveTo(x, y + LABEL_H); ctx.lineTo(x + iw, y); ctx.lineTo(x + iw, y + LABEL_H); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x, y + LABEL_H); ctx.lineTo(x + iw, y); ctx.stroke();
+      }
+      if (outro > 0) {
+        const ow = Math.min(w, outro * this.zoom);
+        ctx.beginPath(); ctx.moveTo(x + w - ow, y); ctx.lineTo(x + w, y + LABEL_H); ctx.lineTo(x + w - ow, y + LABEL_H); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + w - ow, y); ctx.lineTo(x + w, y + LABEL_H); ctx.stroke();
+      }
+    }
     const lx = Math.max(x, 0) + 6;
     ctx.font = `600 11px ${c.ui}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillStyle = pal.label;
-    const name = clip.name || (clip.kind === 'text' ? String(clip.text.content).split('\n')[0] : clip.kind);
+    const name = clip.kind === 'text' ? String(clip.text.content).split('\n')[0] || 'Text' : clip.name || clip.kind;
     let badges = '';
     if (clip.speed !== 1) badges += ` ${clip.speed}×`;
     const fx = clip.fx;

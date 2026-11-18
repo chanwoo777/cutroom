@@ -127,6 +127,44 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Offline mixdown of the whole sequence (unity gain, stereo) for frame-accurate export. Uses the same
+   * scheduling and fade envelopes as playback, rendered faster than real time by OfflineAudioContext.
+   * Returns { buffer, skipped } where skipped counts clips whose audio only exists as a streaming element.
+   */
+  async renderMix(project, assets, duration, sampleRate = 48000) {
+    const length = Math.max(1, Math.ceil(duration * sampleRate));
+    const ctx = new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
+    const bus = ctx.createGain();
+    bus.channelCount = 2;
+    bus.channelCountMode = 'explicit';
+    bus.channelInterpretation = 'speakers';
+    bus.connect(ctx.destination);
+    const tracks = new Map(project.tracks.map((tr) => [tr.id, tr]));
+    let skipped = 0;
+    for (const c of project.clips) {
+      if (c.kind !== 'audio' && c.kind !== 'video') continue;
+      const tr = tracks.get(c.trackId);
+      if (!tr || tr.muted) continue;
+      const asset = assets.get(c.assetId);
+      if (!asset) continue;
+      if (!asset.buffer) { if (asset.audioMode === 'element') skipped++; continue; }
+      const buf = asset.buffer;
+      const offset = c.in;
+      if (offset >= buf.duration) continue;
+      const srcDur = Math.min(c.duration * c.speed, buf.duration - offset);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = c.speed;
+      const g = ctx.createGain();
+      applyEnvelope(g.gain, c.start, 0, c.duration, c.volume ?? 1, c.fadeIn || 0, c.fadeOut || 0);
+      src.connect(g);
+      g.connect(bus);
+      src.start(c.start, offset, srcDur);
+    }
+    return { buffer: await ctx.startRendering(), skipped };
+  }
+
   stopAll() {
     for (const n of this.live) {
       try { n.src.stop(); } catch { /* not started */ }

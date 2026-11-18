@@ -12,13 +12,13 @@ import { voiceControls, modelStatus, licenseNote, runWithProgress } from './voic
 const $ = (id) => document.getElementById(id);
 
 const TEXT_PRESETS = [
-  { id: 'title', label: 'Title', cls: 'sample-title', sample: 'Big title', props: { text: { content: 'Big title', size: 0.12, weight: 900 }, anim: { in: 'pop', out: 'fade', dur: 0.5 } } },
-  { id: 'lower', label: 'Lower third', cls: 'sample-lower', sample: 'Name · Role', props: { text: { content: 'Name Surname\nRole or place', size: 0.045, weight: 700, align: 'left', bg: true, bgColor: '#e6e0d2', color: '#1c1b19', shadow: false, lineHeight: 1.3 }, transform: { x: 0.27, y: 0.8 }, anim: { in: 'slide', out: 'fade', dur: 0.45 } } },
-  { id: 'caption', label: 'Caption', cls: 'sample-caption', sample: 'Caption text', props: { text: { content: 'Caption text goes here', size: 0.05, weight: 700, bg: true, bgColor: '#141311', shadow: false }, transform: { y: 0.86 }, anim: { in: 'fade', out: 'fade', dur: 0.2 } } },
-  { id: 'outline', label: 'Outline', cls: 'sample-outline', sample: 'OUTLINE', props: { text: { content: 'OUTLINE', font: 'heavy', weight: 400, size: 0.14, color: '#e6e0d2', strokeColor: '#1c1b19', strokeWidth: 3, shadow: false }, anim: { in: 'zoom', out: 'fade', dur: 0.4 } } },
-  { id: 'type', label: 'Typewriter', cls: 'sample-type', sample: 'Typed out_', props: { text: { content: 'Typed out, one letter at a time.', font: 'mono', weight: 400, size: 0.05 }, anim: { in: 'typewriter', out: 'fade', dur: 1.6 } } },
-  { id: 'serif', label: 'Serif line', cls: 'sample-serif', sample: 'An elegant line', props: { text: { content: 'An elegant line', font: 'serif', weight: 400, italic: true, size: 0.08 }, anim: { in: 'fade', out: 'fade', dur: 0.8 } } },
-  { id: 'big', label: 'Big number', cls: 'sample-big', sample: '01', props: { text: { content: '01', font: 'condensed', weight: 700, size: 0.3, color: '#d8382b', shadow: false }, anim: { in: 'zoom', out: 'fade', dur: 0.35 } } },
+  { id: 'title', label: 'Title', cls: 'sample-title', sample: 'Big title', props: { text: { content: 'Big title', size: 0.12, weight: 900 }, introAnimation: { type: 'pop', duration: 0.5 }, outroAnimation: { type: 'fade', duration: 0.5 } } },
+  { id: 'lower', label: 'Lower third', cls: 'sample-lower', sample: 'Name · Role', props: { text: { content: 'Name Surname\nRole or place', size: 0.045, weight: 700, align: 'left', bg: true, bgColor: '#e6e0d2', color: '#1c1b19', shadow: false, lineHeight: 1.3 }, transform: { x: 0.27, y: 0.8 }, introAnimation: { type: 'slide', duration: 0.45 }, outroAnimation: { type: 'fade', duration: 0.45 } } },
+  { id: 'caption', label: 'Caption', cls: 'sample-caption', sample: 'Caption text', props: { text: { content: 'Caption text goes here', size: 0.05, weight: 700, bg: true, bgColor: '#141311', shadow: false }, transform: { y: 0.86 }, introAnimation: { type: 'fade', duration: 0.2 }, outroAnimation: { type: 'fade', duration: 0.2 } } },
+  { id: 'outline', label: 'Outline', cls: 'sample-outline', sample: 'OUTLINE', props: { text: { content: 'OUTLINE', font: 'heavy', weight: 400, size: 0.14, color: '#e6e0d2', strokeColor: '#1c1b19', strokeWidth: 3, shadow: false }, introAnimation: { type: 'zoom', duration: 0.4 }, outroAnimation: { type: 'fade', duration: 0.4 } } },
+  { id: 'type', label: 'Typewriter', cls: 'sample-type', sample: 'Typed out_', props: { text: { content: 'Typed out, one letter at a time.', font: 'mono', weight: 400, size: 0.05 }, introAnimation: { type: 'typewriter', duration: 1.6 }, outroAnimation: { type: 'fade', duration: 1.6 } } },
+  { id: 'serif', label: 'Serif line', cls: 'sample-serif', sample: 'An elegant line', props: { text: { content: 'An elegant line', font: 'serif', weight: 400, italic: true, size: 0.08 }, introAnimation: { type: 'fade', duration: 0.8 }, outroAnimation: { type: 'fade', duration: 0.8 } } },
+  { id: 'big', label: 'Big number', cls: 'sample-big', sample: '01', props: { text: { content: '01', font: 'condensed', weight: 700, size: 0.3, color: '#d8382b', shadow: false }, introAnimation: { type: 'zoom', duration: 0.35 }, outroAnimation: { type: 'fade', duration: 0.35 } } },
 ];
 const SHAPE_COLORS = { star: '#d8382b', burst: '#e6e0d2', heart: '#d8382b', arrow: '#e6e0d2', ring: '#d8382b', bubble: '#e6e0d2', bolt: '#b98a2e', sparkle: '#e6e0d2', check: '#4f6b86', pin: '#d8382b', tape: '#e6e0d2', brackets: '#e6e0d2', swoosh: '#d8382b' };
 
@@ -187,7 +187,7 @@ export class MediaBin {
     const items = TEXT_PRESETS.map((p) => {
       const btn = h('button', {
         type: 'button', class: 'preset', draggable: 'true', 'aria-label': `Add ${p.label} text at the playhead`,
-        on: { click: () => this.actions.addClip(make(p), { label: `Add ${p.label}` }) },
+        on: { click: () => { const c = this.actions.addClip(make(p), { label: `Add ${p.label}` }); if (c) this.store.emit('edit-text', { id: c.id, selectAll: true }); } },
       }, h('span', { class: `preset-sample ${p.cls}`, text: p.sample }), h('span', { class: 'preset-add' }, icon('plus')));
       this.#dragFor(btn, () => ({ kind: 'text', duration: 4, make: () => make(p) }));
       return btn;
@@ -222,7 +222,7 @@ export class MediaBin {
     const bh = box / Math.sqrt(ar) * (ar > 2 ? 0.8 : 1), bw = bh * ar;
     ctx.translate(60, 60);
     drawSticker(ctx, st, Math.min(bw, 104), Math.min(bh, 104 / ar));
-    const make = () => makeClip('sticker', { name: label, duration: 3, sticker: { ...st }, anim: { in: 'pop', out: 'fade', dur: 0.35 } });
+    const make = () => makeClip('sticker', { name: label, duration: 3, sticker: { ...st }, introAnimation: { type: 'pop', duration: 0.35 }, outroAnimation: { type: 'fade', duration: 0.35 } });
     const btn = h('button', {
       type: 'button', class: 'sticker-btn', draggable: 'true', title: label, 'aria-label': `Add ${label} sticker at the playhead`,
       on: { click: () => this.actions.addClip(make(), { label: 'Add sticker' }) },

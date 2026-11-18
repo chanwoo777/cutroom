@@ -9,7 +9,8 @@ const HIT = 10;
 const $ = (id) => document.getElementById(id);
 
 export class Monitor {
-  constructor({ store, renderer, playback, audio, actions, onQuality }) {
+  constructor({ store, renderer, playback, audio, actions, onQuality, onResize }) {
+    this.onResize = onResize;
     this.store = store;
     this.renderer = renderer;
     this.playback = playback;
@@ -26,7 +27,7 @@ export class Monitor {
     this.dw = 1; this.dh = 1; this.dpr = 1;
     this.drag = null;
     this.hoverId = null;
-    this.centre = { v: false, h: false };
+    this.guides = { x: [], y: [] };
     this.dirty = true;
     this.lastTc = '';
     this.commitNudge = debounce(() => store.commit('Nudge layer'), 450);
@@ -53,6 +54,7 @@ export class Monitor {
     this.program.style.width = `${this.dw}px`;
     this.program.style.height = `${this.dh}px`;
     this.dirty = true;
+    this.onResize?.(this.dw, this.dh);
   }
 
   #updateEmpty() {
@@ -154,7 +156,7 @@ export class Monitor {
       if (hit) {
         if (!this.store.selection.has(hit.id) || this.store.selection.size > 1) this.store.select([hit.id]);
         if (this.store.playing) this.playback.pause();
-        this.drag = { type: 'move', id: hit.id, start: p, orig: { ...hit.transform }, changed: false };
+        this.drag = { type: 'move', id: hit.id, start: p, orig: { ...hit.transform }, changed: false, snap: this.#snapSetup(hit) };
         o.setPointerCapture(e.pointerId);
       } else {
         this.store.clearSelection();
@@ -172,10 +174,12 @@ export class Monitor {
         d.changed = true;
         let x = d.orig.x + (p.x - d.start.x) / this.dw;
         let y = d.orig.y + (p.y - d.start.y) / this.dh;
-        this.centre = { v: false, h: false };
-        if (!e.altKey) {
-          if (Math.abs(x - 0.5) * this.dw < 6) { x = 0.5; this.centre.v = true; }
-          if (Math.abs(y - 0.5) * this.dh < 6) { y = 0.5; this.centre.h = true; }
+        this.guides = { x: [], y: [] };
+        if (!e.altKey && d.snap) {
+          const sx = this.#snapAxis(x * d.snap.W, d.snap.offX, d.snap.tx);
+          const sy = this.#snapAxis(y * d.snap.H, d.snap.offY, d.snap.ty);
+          if (sx) { x = sx.pos / d.snap.W; this.guides.x = sx.lines; }
+          if (sy) { y = sy.pos / d.snap.H; this.guides.y = sy.lines; }
         }
         t.x = x; t.y = y;
       } else if (d.type === 'scale') {
@@ -197,7 +201,7 @@ export class Monitor {
     const end = () => {
       const d = this.drag;
       this.drag = null;
-      this.centre = { v: false, h: false };
+      this.guides = { x: [], y: [] };
       this.dirty = true;
       if (d?.changed) this.store.commit({ move: 'Move layer', scale: 'Scale layer', rotate: 'Rotate layer' }[d.type]);
     };
@@ -206,15 +210,61 @@ export class Monitor {
     o.addEventListener('pointerleave', () => { if (!this.drag && this.hoverId) { this.hoverId = null; this.dirty = true; } });
     o.addEventListener('dblclick', (e) => {
       const hit = this.#hitClip(this.#local(e));
-      if (hit) this.store.emit('focus-inspector', hit.id);
+      if (!hit) return;
+      // Text: type straight onto the canvas. Other layers: jump to their properties.
+      if (hit.kind === 'text') this.store.emit('edit-text', hit.id);
+      else this.store.emit('focus-inspector', hit.id);
     });
+  }
+
+  /**
+   * Snap candidates for a move, in program-canvas pixels: the layer's visible left / centre / right
+   * (and top / middle / bottom) as offsets from its anchor, against the frame edges and centre lines,
+   * the title-safe lines when guides are shown, and the edges and centres of the other visible layers.
+   */
+  #snapSetup(clip) {
+    const W = this.program.width, H = this.program.height;
+    const r = this.renderer;
+    const b = r.visualBounds(clip, W, H);
+    const offX = [b.minX - b.cx, (b.minX + b.maxX) / 2 - b.cx, b.maxX - b.cx];
+    const offY = [b.minY - b.cy, (b.minY + b.maxY) / 2 - b.cy, b.maxY - b.cy];
+    const tx = [{ v: 0, kind: 'frame' }, { v: W / 2, kind: 'center' }, { v: W, kind: 'frame' }];
+    const ty = [{ v: 0, kind: 'frame' }, { v: H / 2, kind: 'center' }, { v: H, kind: 'frame' }];
+    if (this.store.ui.guides) {
+      tx.push({ v: W * 0.05, kind: 'safe' }, { v: W * 0.95, kind: 'safe' });
+      ty.push({ v: H * 0.05, kind: 'safe' }, { v: H * 0.95, kind: 'safe' });
+    }
+    for (const { clip: other } of this.#visible()) {
+      if (other.id === clip.id) continue;
+      const ob = r.visualBounds(other, W, H);
+      tx.push({ v: ob.minX, kind: 'layer' }, { v: (ob.minX + ob.maxX) / 2, kind: 'layer' }, { v: ob.maxX, kind: 'layer' });
+      ty.push({ v: ob.minY, kind: 'layer' }, { v: (ob.minY + ob.maxY) / 2, kind: 'layer' }, { v: ob.maxY, kind: 'layer' });
+    }
+    return { W, H, offX, offY, tx, ty };
+  }
+
+  /** Nearest snap within ~7 screen pixels; returns the snapped anchor and every guide line it lands on. */
+  #snapAxis(anchor, offsets, targets) {
+    const thr = 7 / Math.max(1e-6, this.k);
+    let best = null;
+    for (const off of offsets) {
+      for (const t of targets) {
+        const delta = t.v - (anchor + off);
+        if (Math.abs(delta) <= thr && (!best || Math.abs(delta) < Math.abs(best.delta) - 1e-9)) best = { delta };
+      }
+    }
+    if (!best) return null;
+    const pos = anchor + best.delta;
+    const lines = [];
+    for (const off of offsets) for (const t of targets) if (Math.abs(t.v - (pos + off)) < 0.5 && !lines.some((l) => Math.abs(l.v - t.v) < 0.5)) lines.push(t);
+    return { pos, lines };
   }
 
   cancelDrag() {
     if (!this.drag) return false;
     const d = this.drag;
     this.drag = null;
-    this.centre = { v: false, h: false };
+    this.guides = { x: [], y: [] };
     if (d.changed) this.store.revert();
     this.dirty = true;
     return true;
@@ -260,11 +310,15 @@ export class Monitor {
     ctx.clearRect(0, 0, dw, dh);
     if (this.store.exporting) return;
     if (this.store.ui.guides) this.#guides(ctx);
-    ctx.strokeStyle = 'rgba(245,241,232,0.8)';
+    // Smart-snap guide lines: frame centre and edges in bone, safe area dashed, other layers in slate.
+    const k = this.k;
+    const style = (kind) => {
+      ctx.setLineDash(kind === 'safe' ? [3, 4] : kind === 'layer' ? [6, 3] : []);
+      ctx.strokeStyle = kind === 'layer' ? 'rgba(143,178,212,0.95)' : 'rgba(245,241,232,0.9)';
+    };
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    if (this.centre.v) { ctx.beginPath(); ctx.moveTo(dw / 2 + 0.5, 0); ctx.lineTo(dw / 2 + 0.5, dh); ctx.stroke(); }
-    if (this.centre.h) { ctx.beginPath(); ctx.moveTo(0, dh / 2 + 0.5); ctx.lineTo(dw, dh / 2 + 0.5); ctx.stroke(); }
+    for (const g of this.guides.x) { style(g.kind); const X = Math.round(Math.min(dw - 0.5, Math.max(0.5, g.v * k))) + 0.5; ctx.beginPath(); ctx.moveTo(X, 0); ctx.lineTo(X, dh); ctx.stroke(); }
+    for (const g of this.guides.y) { style(g.kind); const Y = Math.round(Math.min(dh - 0.5, Math.max(0.5, g.v * k))) + 0.5; ctx.beginPath(); ctx.moveTo(0, Y); ctx.lineTo(dw, Y); ctx.stroke(); }
     ctx.setLineDash([]);
     const layouts = this.renderer.layouts;
     if (this.hoverId && !this.store.selection.has(this.hoverId) && layouts.has(this.hoverId)) {
@@ -288,7 +342,7 @@ export class Monitor {
       ctx.strokeStyle = '#f5f1e8';
       ctx.lineWidth = 1.25;
       ctx.strokeRect(-S.w / 2, -S.h / 2, S.w, S.h);
-      if (ids.length === 1) {
+      if (ids.length === 1 && this.renderer.editingId !== id) {
         ctx.beginPath();
         ctx.moveTo(0, -S.h / 2);
         ctx.lineTo(0, -S.h / 2 - ROT_OFF);
@@ -390,7 +444,7 @@ export class Monitor {
     };
     guides.addEventListener('click', this.toggleGuides);
     const q = $('tp-quality');
-    q.addEventListener('change', () => { store.ui.previewScale = Number(q.value); this.onQuality?.(); });
+    q.addEventListener('change', () => { store.ui.previewScale = q.value === 'auto' ? 'auto' : Number(q.value); this.onQuality?.(); });
     const vol = $('tp-volume');
     const setVol = () => { audio.setMasterVolume(Number(vol.value) / 100); vol.style.setProperty('--p', `${vol.value}%`); };
     vol.addEventListener('input', setVol);

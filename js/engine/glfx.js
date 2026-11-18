@@ -180,7 +180,7 @@ export class GLFX {
     let entry = this.textures.get(key);
     if (!entry) {
       const tex = gl.createTexture();
-      entry = { tex, w: 0, h: 0 };
+      entry = { tex, w: 0, h: 0, mip: false };
       this.textures.set(key, entry);
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -199,9 +199,12 @@ export class GLFX {
     }
     entry.w = source.videoWidth || source.naturalWidth || source.width || 1;
     entry.h = source.videoHeight || source.naturalHeight || source.height || 1;
-    if (mipmap) {
-      gl.generateMipmap(gl.TEXTURE_2D);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    // The filter is chosen per upload: a texture marked mipmapped but re-uploaded without regenerating its
+    // levels would be incomplete (black), and a non-mipmapped one sampled small would alias.
+    if (mipmap) gl.generateMipmap(gl.TEXTURE_2D);
+    if (entry.mip !== mipmap) {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmap ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      entry.mip = mipmap;
     }
     return true;
   }

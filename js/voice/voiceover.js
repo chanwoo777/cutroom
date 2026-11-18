@@ -136,7 +136,7 @@ export function createVoiceover({ store, assets, voice }) {
         const cap = makeClip('text', {
           name: `Caption ${i + 1}`, trackId, start: cs, duration: Math.max(1 / fps(), nextStart - cs),
           text: { content: tm.text, size: 0.05, weight: 700, bg: true, bgColor: '#141311', color: '#ffffff', shadow: false, lineHeight: 1.2 },
-          transform: { y: 0.86 }, anim: { in: 'fade', out: 'none', dur: 0.12 }, voiceOf: audioClip.id,
+          transform: { y: 0.86 }, introAnimation: { type: 'fade', duration: 0.12 }, outroAnimation: { type: 'none', duration: 0.12 }, voiceOf: audioClip.id,
         });
         overwriteRange(project, trackId, cap.start, clipEnd(cap), new Set(), fps());
         project.clips.push(cap);

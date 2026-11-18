@@ -2,9 +2,59 @@
 import { uid, quantize } from '../util.js';
 import { clone } from './store.js';
 
+/**
+ * Clip schema (serializable; every edit snapshots it for undo).
+ * @typedef {{ type: 'none'|'fade'|'pop'|'slide'|'zoom'|'typewriter', duration: number }} ClipAnimation
+ *   Entrance runs over [0, intro.duration]; exit over [clip.duration - outro.duration, clip.duration].
+ *   Their sum never exceeds the clip duration (see effectiveAnimDurations).
+ * @typedef {{ x: number, y: number, scale: number, rotation: number, opacity: number }} Transform
+ *   x / y are the layer centre as a fraction of the frame; rotation in degrees.
+ * @typedef {object} Clip
+ * @property {string} id
+ * @property {'video'|'image'|'audio'|'text'|'sticker'} kind
+ * @property {string|null} trackId
+ * @property {string|null} assetId
+ * @property {number} start      timeline seconds
+ * @property {number} duration   timeline seconds
+ * @property {number} in         source offset in seconds
+ * @property {number} speed
+ * @property {Transform} transform
+ * @property {ClipAnimation} introAnimation
+ * @property {ClipAnimation} outroAnimation
+ */
+
 export const DEFAULT_FX = () => ({ lut: 'none', lutAmount: 100, brightness: 0, contrast: 0, saturation: 0, blur: 0, sepia: 0, vignette: 0 });
 export const DEFAULT_TRANSFORM = () => ({ x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1 });
-export const DEFAULT_ANIM = () => ({ in: 'none', out: 'none', dur: 0.5 });
+export const DEFAULT_INTRO = () => ({ type: 'none', duration: 0.5 });
+export const DEFAULT_OUTRO = () => ({ type: 'none', duration: 0.5 });
+export const MIN_ANIM = 0.05;
+
+/** Upgrade the old shared-duration `anim: {in, out, dur}` shape in place. */
+export function migrateClip(c) {
+  if (c && c.anim && !c.introAnimation) {
+    const d = Number(c.anim.dur) || 0.5;
+    c.introAnimation = { type: c.anim.in || 'none', duration: d };
+    c.outroAnimation = { type: c.anim.out || 'none', duration: d };
+  }
+  if (c) {
+    c.introAnimation ||= DEFAULT_INTRO();
+    c.outroAnimation ||= DEFAULT_OUTRO();
+    delete c.anim;
+  }
+  return c;
+}
+
+/**
+ * Durations actually played. Inactive phases take no time; if intro + outro would overrun the clip,
+ * both are scaled down proportionally so the entrance finishes before the exit starts.
+ */
+export function effectiveAnimDurations(c) {
+  const D = Math.max(0, c.duration);
+  let i = c.introAnimation?.type && c.introAnimation.type !== 'none' ? Math.max(MIN_ANIM, c.introAnimation.duration || 0) : 0;
+  let o = c.outroAnimation?.type && c.outroAnimation.type !== 'none' ? Math.max(MIN_ANIM, c.outroAnimation.duration || 0) : 0;
+  if (i + o > D && i + o > 0) { const k = D / (i + o); i *= k; o *= k; }
+  return { intro: i, outro: o };
+}
 export const DEFAULT_TEXT = () => ({
   content: 'Your title', font: 'grotesk', weight: 700, italic: false, size: 0.09,
   color: '#ffffff', align: 'center', strokeColor: '#000000', strokeWidth: 0,
@@ -35,7 +85,7 @@ export function makeClip(kind, props = {}) {
     id: uid('c'), kind, trackId: null, assetId: null, name: '',
     start: 0, duration: 5, in: 0, speed: 1,
     volume: 1, fadeIn: 0, fadeOut: 0,
-    transform: DEFAULT_TRANSFORM(), anim: DEFAULT_ANIM(),
+    transform: DEFAULT_TRANSFORM(), introAnimation: DEFAULT_INTRO(), outroAnimation: DEFAULT_OUTRO(),
     fit: 'contain', motion: 'none', fx: DEFAULT_FX(),
   };
   if (kind === 'text') base.text = DEFAULT_TEXT();
@@ -43,6 +93,12 @@ export function makeClip(kind, props = {}) {
   for (const [k, v] of Object.entries(props)) {
     if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') base[k] = { ...base[k], ...v };
     else base[k] = v;
+  }
+  if (props.anim) { // legacy call sites
+    const d = props.anim.dur ?? 0.5;
+    base.introAnimation = { type: props.anim.in || 'none', duration: d };
+    base.outroAnimation = { type: props.anim.out || 'none', duration: d };
+    delete base.anim;
   }
   return base;
 }
@@ -110,10 +166,10 @@ export function overwriteRange(project, trackId, s, e, exclude = new Set(), fps 
       right.start = e;
       right.duration = ce - e;
       right.in = c.in + (e - cs) * c.speed;
-      right.anim.in = 'none';
+      right.introAnimation.type = 'none';
       right.fadeIn = 0;
       c.duration = s - cs;
-      c.anim.out = 'none';
+      c.outroAnimation.type = 'none';
       c.fadeOut = 0;
       out.push(c);
       if (right.duration >= minLen) out.push(right);
@@ -139,10 +195,10 @@ export function splitClip(project, clip, t, fps) {
   right.start = t;
   right.duration = end - t;
   right.in = clip.in + (t - clip.start) * clip.speed;
-  right.anim.in = 'none';
+  right.introAnimation.type = 'none';
   right.fadeIn = 0;
   clip.duration = t - clip.start;
-  clip.anim.out = 'none';
+  clip.outroAnimation.type = 'none';
   clip.fadeOut = 0;
   project.clips.push(right);
   return right;
