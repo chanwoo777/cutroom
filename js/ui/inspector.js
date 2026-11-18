@@ -226,7 +226,7 @@ export class Inspector {
       ]),
       this.#section('Quick keys', [
         h('ul', { class: 'hint-list' },
-          ...[['Play / pause', 'Space'], ['Split at playhead', 'S'], ['Razor tool', 'C'], ['Ripple delete', 'Shift Del'], ['Undo', 'Ctrl Z'], ['All shortcuts', '?']]
+          ...[['Play / pause', 'Space'], ['Split at playhead', 'Ctrl B'], ['Razor tool', 'C'], ['Ripple delete', 'Shift Del'], ['Undo', 'Ctrl Z'], ['All shortcuts', '?']]
             .map(([t, k]) => h('li', {}, h('span', { text: t }), h('span', {}, ...k.split(' ').map((x) => h('kbd', { text: x })))))),
       ]),
     ];
