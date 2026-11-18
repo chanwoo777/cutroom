@@ -23,7 +23,9 @@ const FORMATS = [
 ];
 const RESOLUTIONS = [480, 720, 1080, 1440, 2160];
 /** Bits per pixel per frame. Standard ≈ 12 Mbps and High ≈ 22 Mbps at 1080p30 (about 3x the old defaults). */
-const BPP = { draft: 0.08, standard: 0.2, high: 0.35 };
+// Bits per pixel at 30 fps; higher rates scale by (fps/30)^0.75 because consecutive frames share more detail.
+// 1080p: Draft ~7.5, Standard ~20.5, High ~31 Mbps at 30 fps; ~35 / ~52 Mbps Standard / High at 60 fps.
+const BPP = { draft: 0.12, standard: 0.33, high: 0.5 };
 const AUDIO_RATE = 48000;
 // H.264 levels: [level hex, max macroblocks per frame, max macroblocks per second]
 const AVC_LEVELS = [['28', 8192, 245760], ['2A', 8704, 522240], ['32', 22080, 589824], ['33', 36864, 983040], ['34', 36864, 2073600], ['3C', 139264, 4177920]];
@@ -170,8 +172,8 @@ export class ExportDialog {
     const fps = Number(this.el.fps.value);
     const format = this.formats[Number(this.el.format.value)] || this.formats[0];
     const engine = this.el.engine.value;
-    const cap = engine === 'webcodecs' ? 120e6 : 80e6;
-    const vbps = Math.round(Math.min(cap, Math.max(2e6, w * h * fps * BPP[this.quality])));
+    const cap = engine === 'webcodecs' ? 150e6 : 80e6;
+    const vbps = Math.round(Math.min(cap, Math.max(2e6, w * h * 30 * (fps / 30) ** 0.75 * BPP[this.quality])));
     return { engine, w, h, fps, format, vbps, abps: 256000, monitorAudio: this.el.monitor.checked };
   }
 

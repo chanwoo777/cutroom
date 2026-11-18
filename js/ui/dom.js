@@ -98,3 +98,72 @@ export function sizeCanvas(canvas, cssW, cssH) {
   canvas.style.height = `${cssH}px`;
   return dpr;
 }
+
+/**
+ * Timecode with its leading zeros dimmed (00:00:0|3:09), so the digits that are changing read first.
+ * Built from two text spans; nothing is parsed as markup.
+ */
+export function setTimecode(el, tc) {
+  if (el._tc === tc) return;
+  el._tc = tc;
+  const m = /^[0:;.]*/.exec(tc)[0];
+  const cut = m.length >= tc.length ? tc.length - 1 : m.length;
+  let lead = el._lead, rest = el._rest;
+  if (!lead) {
+    lead = el._lead = document.createElement('span');
+    lead.className = 'tc-lead';
+    rest = el._rest = document.createElement('span');
+    el.replaceChildren(lead, rest);
+  }
+  lead.textContent = tc.slice(0, cut);
+  rest.textContent = tc.slice(cut);
+}
+
+/**
+ * Numeric scrubbers: drag any `input.num` sideways to change its value (Shift x10, Alt x0.1); a click
+ * without movement focuses it for typing. Fires `input` while dragging and `change` on release, so
+ * controls update live and commit one undo step.
+ */
+export function installScrubbers(root = document) {
+  root.addEventListener('pointerdown', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement) || !el.classList.contains('num') || el.disabled || e.button !== 0) return;
+    if (document.activeElement === el) return; // already typing: let the caret move
+    e.preventDefault();
+    const step = Number(el.step) || 1;
+    const min = el.min === '' ? -Infinity : Number(el.min);
+    const max = el.max === '' ? Infinity : Number(el.max);
+    const dp = (String(el.step).split('.')[1] || '').length;
+    const start = Number(el.value) || 0;
+    const x0 = e.clientX;
+    let moved = false;
+    el.setPointerCapture?.(e.pointerId);
+    const move = (ev) => {
+      const dx = ev.clientX - x0;
+      if (!moved && Math.abs(dx) < 3) return;
+      if (!moved) { moved = true; el.classList.add('scrubbing'); document.body.style.cursor = 'ew-resize'; }
+      const k = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1;
+      // One step per 2 px, so a 100 px drag on a 0-100 slider covers half its range.
+      const raw = start + Math.round(dx / 2) * step * k;
+      const v = Math.min(max, Math.max(min, raw));
+      const s = v.toFixed(Math.max(dp, k < 1 ? dp + 1 : dp));
+      if (el.value !== s) { el.value = s; el.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      document.body.style.cursor = '';
+      if (moved) {
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.classList.remove('scrubbing');
+      } else {
+        el.focus();
+        el.select();
+      }
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  });
+}

@@ -2,7 +2,7 @@
 // bounding box on an overlay canvas, and turns pointer drags into move / scale / rotate edits.
 import { clamp, formatTC, debounce } from '../util.js';
 import { activeClipAt, isVisual } from '../core/ops.js';
-import { sizeCanvas, setIcon } from './dom.js';
+import { sizeCanvas, setIcon, setTimecode } from './dom.js';
 
 const ROT_OFF = 26;
 const HIT = 10;
@@ -20,6 +20,7 @@ export class Monitor {
     this.monitorEl = document.querySelector('.monitor');
     this.stage = $('stage');
     this.frameEl = $('frame');
+    this.stageInner = $('stage-inner');
     this.program = $('program');
     this.overlay = $('overlay');
     this.empty = $('empty-stage');
@@ -45,7 +46,15 @@ export class Monitor {
     const r = this.stage.getBoundingClientRect();
     const [W, H] = this.store.exporting ? [this.program.width, this.program.height] : this.store.dims;
     const pad = r.width < 520 ? 10 : 22;
-    const s = Math.max(0.01, Math.min((r.width - pad * 2) / W, (r.height - pad * 2) / H));
+    const fit = Math.max(0.01, Math.min((r.width - pad * 2) / W, (r.height - pad * 2) / H));
+    // Canvas zoom: Fit, or a fixed ratio where 100% is one sequence pixel per screen pixel. The stage
+    // scrolls when the frame is larger than it. The CSS box never exceeds 8192 px (canvas limits).
+    const z = this.store.ui.zoom;
+    let s = typeof z === 'number' && !this.store.exporting ? z / (window.devicePixelRatio || 1) : fit;
+    s = Math.min(s, 8192 / Math.max(W, H));
+    if (this.stageInner) this.stageInner.style.padding = `${pad}px`;
+    const ar = `${W} / ${H}`;
+    if (this.stage.style.getPropertyValue('--frame-ar') !== ar) this.stage.style.setProperty('--frame-ar', ar); // narrow layouts size the stage to the frame
     this.dw = Math.max(1, Math.floor(W * s));
     this.dh = Math.max(1, Math.floor(H * s));
     this.frameEl.style.width = `${this.dw}px`;
@@ -310,11 +319,11 @@ export class Monitor {
     ctx.clearRect(0, 0, dw, dh);
     if (this.store.exporting) return;
     if (this.store.ui.guides) this.#guides(ctx);
-    // Smart-snap guide lines: frame centre and edges in bone, safe area dashed, other layers in slate.
+    // Smart-snap guide lines: the cut-red hairline; safe area and other layers dashed.
     const k = this.k;
     const style = (kind) => {
       ctx.setLineDash(kind === 'safe' ? [3, 4] : kind === 'layer' ? [6, 3] : []);
-      ctx.strokeStyle = kind === 'layer' ? 'rgba(143,178,212,0.95)' : 'rgba(245,241,232,0.9)';
+      ctx.strokeStyle = kind === 'layer' ? 'rgba(255,115,120,0.9)' : '#f0464c';
     };
     ctx.lineWidth = 1;
     for (const g of this.guides.x) { style(g.kind); const X = Math.round(Math.min(dw - 0.5, Math.max(0.5, g.v * k))) + 0.5; ctx.beginPath(); ctx.moveTo(X, 0); ctx.lineTo(X, dh); ctx.stroke(); }
@@ -325,7 +334,7 @@ export class Monitor {
       const S = this.#screen(layouts.get(this.hoverId));
       ctx.save();
       ctx.translate(S.cx, S.cy); ctx.rotate(S.rot);
-      ctx.strokeStyle = 'rgba(245,241,232,0.5)';
+      ctx.strokeStyle = 'rgba(231,234,240,0.45)';
       ctx.lineWidth = 1;
       ctx.strokeRect(-S.w / 2, -S.h / 2, S.w, S.h);
       ctx.restore();
@@ -336,11 +345,11 @@ export class Monitor {
       ctx.save();
       ctx.translate(S.cx, S.cy);
       ctx.rotate(S.rot);
-      ctx.strokeStyle = 'rgba(20,19,17,0.85)';
+      ctx.strokeStyle = 'rgba(11,13,16,0.8)';
       ctx.lineWidth = 3;
       ctx.strokeRect(-S.w / 2, -S.h / 2, S.w, S.h);
-      ctx.strokeStyle = '#f5f1e8';
-      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
       ctx.strokeRect(-S.w / 2, -S.h / 2, S.w, S.h);
       if (ids.length === 1 && this.renderer.editingId !== id) {
         ctx.beginPath();
@@ -349,17 +358,17 @@ export class Monitor {
         ctx.stroke();
         const sq = 8;
         for (const [hx, hy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-          ctx.fillStyle = '#f5f1e8';
+          ctx.fillStyle = '#ffffff';
           ctx.fillRect((hx * S.w) / 2 - sq / 2, (hy * S.h) / 2 - sq / 2, sq, sq);
-          ctx.strokeStyle = '#1c1b19';
+          ctx.strokeStyle = '#0b0d10';
           ctx.lineWidth = 1;
           ctx.strokeRect((hx * S.w) / 2 - sq / 2 + 0.5, (hy * S.h) / 2 - sq / 2 + 0.5, sq - 1, sq - 1);
         }
         ctx.beginPath();
         ctx.arc(0, -S.h / 2 - ROT_OFF, 5, 0, Math.PI * 2);
-        ctx.fillStyle = '#f5f1e8';
+        ctx.fillStyle = '#ffffff';
         ctx.fill();
-        ctx.strokeStyle = '#1c1b19';
+        ctx.strokeStyle = '#0b0d10';
         ctx.stroke();
       }
       ctx.restore();
@@ -369,12 +378,12 @@ export class Monitor {
       const clip = this.store.getClip(d.id);
       if (clip) {
         const label = d.type === 'scale' ? `${Math.round(clip.transform.scale * 100)}%` : `${clip.transform.rotation}°`;
-        ctx.font = '600 11px "Cascadia Mono", ui-monospace, monospace';
+        ctx.font = '600 11px "JetBrains Mono", ui-monospace, monospace';
         const tw = ctx.measureText(label).width + 10;
         const x = clamp(d.p.x + 12, 0, dw - tw), y = clamp(d.p.y - 26, 0, dh - 20);
-        ctx.fillStyle = 'rgba(20,19,17,0.88)';
+        ctx.fillStyle = 'rgba(30,34,43,0.94)';
         ctx.fillRect(x, y, tw, 20);
-        ctx.fillStyle = '#ece7dc';
+        ctx.fillStyle = '#e7eaf0';
         ctx.textBaseline = 'middle';
         ctx.fillText(label, x + 5, y + 10.5);
       }
@@ -386,34 +395,34 @@ export class Monitor {
     const aspect = this.store.project.aspect;
     ctx.save();
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(245,241,232,0.16)';
+    ctx.strokeStyle = 'rgba(231,234,240,0.16)';
     for (const f of [1 / 3, 2 / 3]) {
       ctx.beginPath(); ctx.moveTo(Math.round(dw * f) + 0.5, 0); ctx.lineTo(Math.round(dw * f) + 0.5, dh); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, Math.round(dh * f) + 0.5); ctx.lineTo(dw, Math.round(dh * f) + 0.5); ctx.stroke();
     }
     if (aspect === '9:16') {
-      ctx.fillStyle = 'rgba(230,224,210,0.08)';
+      ctx.fillStyle = 'rgba(231,234,240,0.08)';
       ctx.fillRect(0, 0, dw, dh * 0.12);
       ctx.fillRect(0, dh * 0.8, dw, dh * 0.2);
       ctx.fillRect(dw * 0.86, dh * 0.42, dw * 0.14, dh * 0.38);
-      ctx.fillStyle = 'rgba(245,241,232,0.6)';
-      ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(231,234,240,0.6)';
+      ctx.font = '10px "Hanken Grotesk", system-ui, sans-serif';
       ctx.textBaseline = 'top';
       ctx.fillText('Platform UI', 6, dh * 0.8 + 6);
     }
     ctx.setLineDash([4, 3]);
     const zones = [[0.035, 'Action safe'], [0.05, 'Title safe']];
-    ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+    ctx.font = '10px "Hanken Grotesk", system-ui, sans-serif';
     ctx.textBaseline = 'top';
     for (const [m, label] of zones) {
       const x = dw * m, y = dh * m;
-      ctx.strokeStyle = m < 0.04 ? 'rgba(245,241,232,0.38)' : 'rgba(245,241,232,0.6)';
+      ctx.strokeStyle = m < 0.04 ? 'rgba(231,234,240,0.38)' : 'rgba(231,234,240,0.6)';
       ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(dw - 2 * x), Math.round(dh - 2 * y));
-      ctx.fillStyle = 'rgba(245,241,232,0.6)';
+      ctx.fillStyle = 'rgba(231,234,240,0.6)';
       if (dw > 260) ctx.fillText(label, x + 4, y + 3 + (m < 0.04 ? 0 : 12));
     }
     ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(245,241,232,0.55)';
+    ctx.strokeStyle = 'rgba(231,234,240,0.55)';
     ctx.beginPath();
     ctx.moveTo(dw / 2 - 8, dh / 2 + 0.5); ctx.lineTo(dw / 2 + 8, dh / 2 + 0.5);
     ctx.moveTo(dw / 2 + 0.5, dh / 2 - 8); ctx.lineTo(dw / 2 + 0.5, dh / 2 + 8);
@@ -444,7 +453,8 @@ export class Monitor {
     };
     guides.addEventListener('click', this.toggleGuides);
     const q = $('tp-quality');
-    q.addEventListener('change', () => { store.ui.previewScale = q.value === 'auto' ? 'auto' : Number(q.value); this.onQuality?.(); });
+    q.value = String(store.ui.previewScale);
+    q.addEventListener('change', () => { store.ui.previewScale = Number(q.value) || 1; this.onQuality?.(); });
     const vol = $('tp-volume');
     const setVol = () => { audio.setMasterVolume(Number(vol.value) / 100); vol.style.setProperty('--p', `${vol.value}%`); };
     vol.addEventListener('input', setVol);
@@ -468,11 +478,11 @@ export class Monitor {
     const levels = this.store.playing ? this.audio.meter() : [0, 0];
     for (let i = 0; i < 2; i++) {
       const y = i * 7 + 1;
-      ctx.fillStyle = '#36332e';
+      ctx.fillStyle = '#272c37';
       ctx.fillRect(0, y, 44, 5);
       const db = 20 * Math.log10(Math.max(1e-5, levels[i]));
       const norm = clamp((db + 48) / 48, 0, 1);
-      ctx.fillStyle = db > -1 ? '#d8382b' : '#e6e0d2';
+      ctx.fillStyle = db > -1 ? '#f0464c' : db > -9 ? '#f2c14e' : '#6fcf97';
       ctx.fillRect(0, y, Math.round(44 * norm), 5);
     }
   }
@@ -481,9 +491,8 @@ export class Monitor {
     const { store } = this;
     const fps = store.project.fps;
     const tc = formatTC(store.time, fps);
-    if (tc !== this.lastTc) { this.tcNow.textContent = tc; this.lastTc = tc; }
-    const dur = formatTC(store.duration, fps);
-    if (dur !== this.tcDur.textContent) this.tcDur.textContent = dur;
+    if (tc !== this.lastTc) { setTimecode(this.tcNow, tc); this.lastTc = tc; }
+    setTimecode(this.tcDur, formatTC(store.duration, fps));
     if (store.playing || this.meterActive) { this.#drawMeter(); this.meterActive = store.playing; }
     this.draw();
   }

@@ -1,4 +1,5 @@
 // Media lives only in this tab: files become Blob URLs tracked in a registry so every one can be revoked.
+import { probeFrameRate } from './probe.js';
 import { Emitter } from './emitter.js';
 import { uid, once, seekVideo } from '../util.js';
 
@@ -48,22 +49,56 @@ export function classify(file) {
 }
 
 /** Peak amplitude per bucket, used to draw waveforms at any zoom. */
-export function computePeaks(buffer, perSec = 200) {
+/**
+ * Peak envelope at `perSec` buckets per second plus a max-pyramid (each level halves the rate), so the
+ * timeline reads about one bucket per pixel at any zoom instead of scanning thousands per pixel.
+ */
+function peakBucket(chans, len, step, stride, i) {
+  const s = Math.floor(i * step);
+  const e = Math.min(len, Math.floor((i + 1) * step));
+  let m = 0;
+  for (const d of chans) for (let j = s; j < e; j += stride) { const v = d[j] < 0 ? -d[j] : d[j]; if (v > m) m = v; }
+  return m;
+}
+function withPyramid(perSec, data) {
+  const levels = [{ perSec, data }];
+  let cur = data, ps = perSec;
+  while (cur.length > 32 && ps > 0.5) {
+    const n = Math.ceil(cur.length / 2);
+    const nx = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const a = cur[2 * i], b = 2 * i + 1 < cur.length ? cur[2 * i + 1] : 0; nx[i] = a > b ? a : b; }
+    ps /= 2;
+    cur = nx;
+    levels.push({ perSec: ps, data: nx });
+  }
+  return { perSec, data, levels };
+}
+function peakSetup(buffer, perSec) {
   const n = Math.max(1, Math.ceil(buffer.duration * perSec));
-  const data = new Float32Array(n);
   const chans = [];
   for (let c = 0; c < buffer.numberOfChannels; c++) chans.push(buffer.getChannelData(c));
-  const len = buffer.length;
-  const step = len / n;
-  const stride = step > 64 ? 2 : 1;
+  const step = buffer.length / n;
+  return { n, chans, len: buffer.length, step, stride: step > 64 ? 2 : 1 };
+}
+export function computePeaks(buffer, perSec = 200) {
+  const { n, chans, len, step, stride } = peakSetup(buffer, perSec);
+  const data = new Float32Array(n);
+  for (let i = 0; i < n; i++) data[i] = peakBucket(chans, len, step, stride, i);
+  return withPyramid(perSec, data);
+}
+/** Same result, computed in slices that yield to the event loop so long files never freeze the UI. */
+export async function computePeaksAsync(buffer, perSec = 200) {
+  const { n, chans, len, step, stride } = peakSetup(buffer, perSec);
+  const data = new Float32Array(n);
+  let sliceStart = performance.now();
   for (let i = 0; i < n; i++) {
-    const s = Math.floor(i * step);
-    const e = Math.min(len, Math.floor((i + 1) * step));
-    let m = 0;
-    for (const d of chans) for (let j = s; j < e; j += stride) { const v = d[j] < 0 ? -d[j] : d[j]; if (v > m) m = v; }
-    data[i] = m;
+    data[i] = peakBucket(chans, len, step, stride, i);
+    if ((i & 255) === 0 && performance.now() - sliceStart > 12) {
+      await new Promise((r) => setTimeout(r, 0));
+      sliceStart = performance.now();
+    }
   }
-  return { perSec, data };
+  return withPyramid(perSec, data);
 }
 
 function friendlyError(kind, err) {
@@ -143,12 +178,13 @@ export class AssetStore extends Emitter {
     asset.duration = dur;
     asset.width = v.videoWidth;
     asset.height = v.videoHeight;
+    asset.fps = await probeFrameRate(file);
 
     if (file.size <= MAX_DECODE_BYTES) {
       try {
         const ab = await file.arrayBuffer();
         asset.buffer = await this.audio.decode(ab);
-        asset.peaks = computePeaks(asset.buffer);
+        asset.peaks = await computePeaksAsync(asset.buffer);
         asset.hasAudio = true;
       } catch {
         asset.hasAudio = false; // no audio track, or a codec decodeAudioData cannot read
@@ -209,7 +245,7 @@ export class AssetStore extends Emitter {
     const ab = await file.arrayBuffer();
     asset.buffer = await this.audio.decode(ab);
     asset.duration = asset.buffer.duration;
-    asset.peaks = computePeaks(asset.buffer);
+    asset.peaks = await computePeaksAsync(asset.buffer);
   }
 
   /** Procedural audio from the built-in synth: no file, no URL. */

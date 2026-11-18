@@ -34,7 +34,6 @@ export class MediaBin {
     this.posters = new Map();
     this.sfxCache = new Map();
     this.playingRow = null;
-    this.#tabs();
     this.renderMedia();
     this.#renderText();
     this.#renderStickers();
@@ -56,29 +55,6 @@ export class MediaBin {
     return list;
   }
 
-  #tabs() {
-    const tabs = [...document.querySelectorAll('.bin [role="tab"]')];
-    const select = (tab, focus = false) => {
-      for (const t of tabs) {
-        const on = t === tab;
-        t.setAttribute('aria-selected', String(on));
-        t.tabIndex = on ? 0 : -1;
-        $(t.getAttribute('aria-controls')).hidden = !on;
-      }
-      if (focus) tab.focus();
-    };
-    tabs.forEach((t, i) => {
-      t.addEventListener('click', () => select(t));
-      t.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-          e.preventDefault();
-          const n = (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-          select(tabs[n], true);
-        }
-      });
-    });
-  }
-
   #dragFor(el, payloadFn) {
     el.addEventListener('dragstart', (e) => {
       const payload = payloadFn();
@@ -96,7 +72,7 @@ export class MediaBin {
     const list = this.assets.list();
     this.posters.clear();
     const head = h('div', { class: 'pane-head' },
-      h('h2', {}, 'Media ', h('span', { class: 'count', text: list.length ? `${list.length}` : '' })),
+      h('span', { class: 'count', text: list.length ? `${list.length} file${list.length > 1 ? 's' : ''} in this tab` : '' }),
       h('button', { type: 'button', class: 'btn bone small', on: { click: () => this.openPicker() } }, icon('import'), h('span', { text: 'Import' })));
     let body;
     if (!list.length) {
@@ -158,7 +134,7 @@ export class MediaBin {
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
     if (a.kind === 'audio') {
-      ctx.fillStyle = '#b98a2e';
+      ctx.fillStyle = '#1e6e52';
       ctx.fillRect(0, 0, W, H);
       const data = a.peaks?.data;
       if (!data) return;

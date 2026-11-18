@@ -18,6 +18,9 @@ import { clamp, formatBytes } from './util.js';
 import { VoiceEngine, loadVoiceSettings } from './engine/voice.js';
 import { createVoiceover } from './voice/voiceover.js';
 import { InlineTextEditor } from './ui/texteditor.js';
+import { installShell } from './ui/shell.js';
+import { FxPanels } from './ui/fxpanels.js';
+import { installScrubbers } from './ui/dom.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,28 +35,19 @@ const markDirty = () => { renderDirty = true; };
 const playback = new Playback({ store, assets, audio, glfx, pool: $('media-pool'), onDirty: markDirty });
 const renderer = new Renderer({ canvas: $('program'), store, assets, playback, glfx });
 const actions = createActions({ store, assets, playback, glfx });
+playback.onRelease = (id) => renderer.gpu?.deleteMedia(id);
 
 /**
- * Preview resolution. "Auto" renders the program canvas at the monitor's real device-pixel size (never
- * above the sequence resolution), so the browser never resamples it with CSS and the picture stays sharp.
- * Exports always resize the canvas to the full export resolution.
+ * Preview resolution. The program canvas's backing store is the sequence resolution itself (1920x1080,
+ * 3840x2160...), independent of its CSS size; the browser scales it to the monitor with high-quality
+ * filtering (object-fit: contain), so the preview is exactly the exported picture. Half and Quarter are
+ * opt-in for slow machines. Exports render at their own resolution.
  */
-let lastDisplayW = 0;
-function sizeProgram(displayW = lastDisplayW) {
-  lastDisplayW = displayW;
+function sizeProgram() {
   if (store.exporting) return;
   const [W, H] = store.dims;
-  const q = store.ui.previewScale;
-  let w, h;
-  if (q === 'auto') {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    w = Math.max(2, Math.min(W, Math.round((displayW || W) * dpr)));
-    h = Math.max(2, Math.round((w * H) / W));
-  } else {
-    w = Math.round(W * q);
-    h = Math.round(H * q);
-  }
-  renderer.resize(w, h);
+  const q = typeof store.ui.previewScale === 'number' ? store.ui.previewScale : 1;
+  renderer.resize(Math.max(2, Math.round(W * q)), Math.max(2, Math.round(H * q)));
   markDirty();
 }
 function applyCanvasSize() {
@@ -88,7 +82,7 @@ async function voiceSelected() {
   }
 }
 
-const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize, onResize: (dw) => sizeProgram(dw) });
+const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize, onResize: () => sizeProgram() });
 const textEditor = new InlineTextEditor({ store, renderer, monitor, playback });
 const timeline = new Timeline({ store, assets, playback, actions, onVoice: voiceSelected });
 const inspector = new Inspector({ store, assets, glfx, actions, voice, voiceover, audio, renderer });
@@ -97,6 +91,10 @@ const exporter = new ExportDialog({ store, assets, renderer, playback, audio, bl
 const shortcutsDialog = $('shortcuts-dialog');
 shortcutsDialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => shortcutsDialog.close()));
 installShortcuts({ store, actions, playback, timeline, monitor, exporter, shortcutsDialog, onVoice: voiceSelected, textEditor });
+const shell = installShell({ store, actions, monitor });
+inspector.openPanel = shell.openPanel;
+const fxPanels = new FxPanels({ store, actions, openPanel: shell.openPanel });
+installScrubbers(document);
 applyCanvasSize();
 
 // ---------- app bar ----------
@@ -117,6 +115,7 @@ $('btn-new').addEventListener('click', () => {
   playback.pause();
   playback.releaseAll();
   glfx?.deleteAll();
+  renderer.gpu?.deleteAll();
   assets.reset();
   store.replaceProject(defaultProject());
   applyCanvasSize();
@@ -157,7 +156,7 @@ function syncHistory() {
   undoBtn.title = hst.canUndo ? `Undo ${hst.undoLabel} (Ctrl+Z)` : 'Nothing to undo';
   redoBtn.title = hst.canRedo ? `Redo ${hst.redoLabel} (Ctrl+Shift+Z)` : 'Nothing to redo';
 }
-st.engine.textContent = glfx ? 'WebGL2 grading' : 'Canvas 2D grading (WebGL2 unavailable)';
+st.engine.textContent = renderer.gpu ? 'WebGL2 compositor' : 'Canvas 2D compositor (WebGL2 unavailable)';
 const stVoice = $('st-voice');
 voice.on('state', (v) => {
   stVoice.hidden = v.state === 'idle';
@@ -254,17 +253,37 @@ window.addEventListener('beforeunload', (e) => {
 window.addEventListener('pagehide', () => blobs.revokeAll());
 
 // ---------- frame loop ----------
-function frame() {
+// Perf readout: display frame rate (rAF cadence) and the CPU cost of compositing one frame.
+const perf = { el: $('st-perf'), last: 0, n: 0, dtSum: 0, msSum: 0, shownAt: 0, fps: 0, ms: 0, lastMs: 0 };
+function trackPerf(now, renderMs) {
+  if (renderMs > 0) perf.lastMs = renderMs;
+  if (perf.last) { perf.n++; perf.dtSum += now - perf.last; perf.msSum += renderMs; }
+  perf.last = now;
+  if (now - perf.shownAt < 500 || !perf.n) return;
+  perf.fps = 1000 / (perf.dtSum / perf.n);
+  perf.ms = perf.msSum / perf.n;
+  perf.n = 0; perf.dtSum = 0; perf.msSum = 0; perf.shownAt = now;
+  if (perf.el) {
+    // Frame rate only means something while playing; when parked, show the cost of the last frame.
+    perf.el.textContent = playback.playing ? `${Math.round(perf.fps)} fps · ${perf.ms.toFixed(1)} ms/frame` : `${perf.lastMs.toFixed(1)} ms/frame`;
+    perf.el.dataset.level = !playback.playing || perf.fps >= 55 ? 'ok' : perf.fps >= 40 ? 'warn' : 'bad';
+  }
+}
+function frame(now) {
   try {
+    let renderMs = 0;
     // During a frame-accurate export the exporter owns the videos and the program canvas.
     if (!playback.suspended) {
       playback.update();
       if (renderDirty || playback.playing) {
+        const a = performance.now();
         renderer.render(store.time);
+        renderMs = performance.now() - a;
         renderDirty = false;
         monitor.dirty = true;
       }
     }
+    trackPerf(now, renderMs);
     textEditor.frame();
     monitor.frame();
     timeline.frame();
@@ -282,4 +301,4 @@ function frame() {
 requestAnimationFrame(frame);
 
 // Exposed for debugging in the console only; holds no secrets.
-window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx, voice, voiceover, textEditor };
+window.cutroom = { store, assets, playback, renderer, actions, blobs, glfx, voice, voiceover, textEditor, perf, timeline, monitor, fxPanels };

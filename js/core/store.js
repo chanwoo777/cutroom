@@ -80,7 +80,7 @@ export class Store extends Emitter {
     this.tool = 'select';
     this.snap = true;
     this.zoom = 80; // px per second
-    this.ui = { guides: false, previewScale: 'auto', loop: false, snapGuides: true };
+    this.ui = { guides: false, previewScale: 1, zoom: 'fit', loop: false, snapGuides: true };
   }
 
   get dims() { return ASPECTS[this.project.aspect] || ASPECTS['16:9']; }

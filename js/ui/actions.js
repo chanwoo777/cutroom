@@ -1,4 +1,6 @@
 // Editing commands shared by the timeline, inspector, library and keyboard shortcuts.
+import { snapRate } from '../core/probe.js';
+import { FPS_OPTIONS } from '../core/store.js';
 import { quantize, formatTC } from '../util.js';
 import {
   splitClip, rippleDelete, deleteClips, duplicateClips, makeClip, overwriteRange, findFreeTrack,
@@ -129,6 +131,13 @@ export function createActions({ store, assets, playback, glfx }) {
 
     addAsset(asset, opts = {}) {
       if (!asset || asset.status !== 'ready') return null;
+      // The first footage on an empty timeline sets the sequence frame rate (e.g. 59.94 fps -> 60), so
+      // playback and export keep the source's motion cadence instead of dropping to 30.
+      const rate = asset.kind === 'video' ? snapRate(asset.fps, FPS_OPTIONS) : null;
+      if (rate && rate !== store.project.fps && !store.project.clips.some((c) => c.kind === 'video' || c.kind === 'image')) {
+        store.project.fps = rate;
+        toast(`Sequence set to ${rate} fps to match the footage.`, { kind: 'ok' });
+      }
       return A.addClip(A.makeAssetClip(asset), opts);
     },
 
@@ -149,6 +158,13 @@ export function createActions({ store, assets, playback, glfx }) {
       store.emit('history');
       const n = affected.length;
       toast(`Removed ${asset.name}${n ? ` and ${n} clip${n > 1 ? 's' : ''}` : ''}. Its memory was released.`);
+    },
+
+    setFps(fps) {
+      if (!FPS_OPTIONS.includes(fps) || store.project.fps === fps) return;
+      store.project.fps = fps;
+      store.commit(`Frame rate ${fps} fps`);
+      announce(`Sequence frame rate ${fps} frames per second`);
     },
 
     setAspect(aspect) {

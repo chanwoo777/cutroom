@@ -75,6 +75,66 @@ export const TEXT_FONTS = {
 export const ANIM_IN = [['none', 'None'], ['fade', 'Fade'], ['pop', 'Pop'], ['slide', 'Slide up'], ['zoom', 'Zoom'], ['typewriter', 'Typewriter']];
 export const ANIM_OUT = [['none', 'None'], ['fade', 'Fade'], ['pop', 'Pop'], ['slide', 'Slide up'], ['zoom', 'Zoom']];
 
+export const TRANSITIONS = [
+  ['none', 'None'], ['dissolve', 'Cross dissolve'], ['fade-black', 'Fade through black'], ['wipe-left', 'Wipe left'],
+  ['wipe-right', 'Wipe right'], ['slide-left', 'Slide left'], ['slide-up', 'Slide up'], ['zoom', 'Zoom in'],
+];
+
+/** The clip that ends exactly where `clip` starts on the same track: the outgoing side of its transition. */
+export function prevAdjacent(project, clip) {
+  return project.clips.find((c) => c.trackId === clip.trackId && c.id !== clip.id && Math.abs(c.start + c.duration - clip.start) < 1e-4) || null;
+}
+export function nextAdjacent(project, clip) {
+  const end = clip.start + clip.duration;
+  return project.clips.find((c) => c.trackId === clip.trackId && c.id !== clip.id && Math.abs(c.start - end) < 1e-4) || null;
+}
+/** Seconds of transition at the head of `clip` (0 when it has none or nothing butts against it). */
+export function transitionDuration(project, clip) {
+  const tr = clip.transition;
+  if (!tr || tr.type === 'none' || !prevAdjacent(project, clip)) return 0;
+  return Math.max(0.05, Math.min(tr.duration || 0.5, clip.duration));
+}
+/** How long past its own end a clip stays visible because the next clip transitions out of it. */
+export function tailDuration(project, clip) {
+  const next = nextAdjacent(project, clip);
+  return next ? transitionDuration(project, next) : 0;
+}
+
+/**
+ * What to draw for one track at time t. Normally one layer; during a transition, the outgoing clip
+ * (continuing past its end) and the incoming clip with the transition's progress p in [0, 1).
+ */
+export function trackLayers(project, trackId, t) {
+  const B = activeClipAt(project, trackId, t);
+  if (!B) return [];
+  const d = transitionDuration(project, B);
+  if (d > 0 && t < B.start + d) {
+    const A = prevAdjacent(project, B);
+    const p = Math.max(0, Math.min(1, (t - B.start) / d));
+    return [{ clip: A, role: 'out', type: B.transition.type, p }, { clip: B, role: 'in', type: B.transition.type, p }];
+  }
+  return [{ clip: B }];
+}
+
+const smooth = (p) => p * p * (3 - 2 * p);
+/** Alpha, offset, scale and scissor a transition applies to one of its two layers (frame pixels). */
+export function transitionMods(layer, W, H) {
+  const m = { alpha: 1, dx: 0, dy: 0, scale: 1, scissor: null };
+  if (!layer.role) return m;
+  const p = layer.p, e = smooth(p), out = layer.role === 'out';
+  switch (layer.type) {
+    case 'dissolve': if (!out) m.alpha = p; break;
+    case 'fade-black': m.alpha = out ? Math.max(0, 1 - 2 * p) : Math.max(0, 2 * p - 1); break;
+    case 'wipe-left': if (!out) m.scissor = [W * (1 - e), 0, W * e + 1, H]; break;
+    case 'wipe-right': if (!out) m.scissor = [0, 0, W * e, H]; break;
+    case 'slide-left': m.dx = out ? -W * e : W * (1 - e); break;
+    case 'slide-up': m.dy = out ? -H * e : H * (1 - e); break;
+    case 'zoom': if (!out) { m.scale = 1 + 0.25 * (1 - e); m.alpha = e; } break;
+    default: break;
+  }
+  return m;
+}
+
 export const isVisual = (c) => c.kind === 'video' || c.kind === 'image' || c.kind === 'text' || c.kind === 'sticker';
 export const isMedia = (c) => c.kind === 'video' || c.kind === 'image';
 export const trackKindFor = (kind) => (kind === 'audio' ? 'audio' : 'video');
@@ -167,6 +227,7 @@ export function overwriteRange(project, trackId, s, e, exclude = new Set(), fps 
       right.duration = ce - e;
       right.in = c.in + (e - cs) * c.speed;
       right.introAnimation.type = 'none';
+      delete right.transition;
       right.fadeIn = 0;
       c.duration = s - cs;
       c.outroAnimation.type = 'none';
@@ -196,6 +257,7 @@ export function splitClip(project, clip, t, fps) {
   right.duration = end - t;
   right.in = clip.in + (t - clip.start) * clip.speed;
   right.introAnimation.type = 'none';
+  delete right.transition; // a cut never inherits the clip's head transition
   right.fadeIn = 0;
   clip.duration = t - clip.start;
   clip.outroAnimation.type = 'none';

@@ -6,10 +6,11 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://*.hf.co; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#1C1B19">
+  <meta name="theme-color" content="#0B0D10">
   <title>Cutroom · in-browser video editor</title>
   <meta name="description" content="Cut, grade, title and export video entirely in your browser. Files open from your disk and never leave the tab.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/hanken-grotesk-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/app.css">
   <script type="module" src="js/main.js"></script>
 </head>
@@ -68,60 +69,110 @@
   <symbol id="i-align-bottom" viewBox="0 0 24 24"><path d="M3.5 20h17"/><rect x="6.5" y="4.5" width="4" height="12" rx="1"/><rect x="13.5" y="9.5" width="4" height="7" rx="1"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21M8.5 21h7"/></symbol>
   <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
+<symbol id="i-transition" viewBox="0 0 24 24"><rect x="2.5" y="5" width="9" height="14" rx="1.5"/><path d="M14.5 5h5.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-5.5"/><path d="M11.5 9l3 3-3 3"/></symbol>
+  <symbol id="i-effects" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12l7.4 4.2M12 12l-7.4 4.2"/></symbol>
+  <symbol id="i-chevrons-left" viewBox="0 0 24 24"><path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4.5v4h4"/></symbol>
 </svg>
 
 <div class="app" id="app">
   <header class="appbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 7h13l-4.5 18H3z" fill="#E6E0D2"/><path d="M19 7h10v18H14.5z" fill="#D8382B"/></svg>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M4 7h12l-4.5 18H4z" fill="#E7EAF0"/><path d="M19.5 7H28v18H15z" fill="#F0464C"/></svg>
       <span class="wordmark">Cutroom</span>
     </div>
     <label class="title-field">
       <span class="sr-only">Project title</span>
       <input id="project-title" type="text" maxlength="80" spellcheck="false" autocomplete="off" value="Untitled cut">
     </label>
-    <div class="seg" role="radiogroup" aria-label="Aspect ratio" id="aspect-group">
-      <button type="button" role="radio" data-aspect="16:9" aria-checked="true">16:9</button>
-      <button type="button" role="radio" data-aspect="9:16" aria-checked="false">9:16</button>
-      <button type="button" role="radio" data-aspect="1:1" aria-checked="false">1:1</button>
-      <button type="button" role="radio" data-aspect="4:5" aria-checked="false">4:5</button>
-    </div>
-    <div class="appbar-group">
+    <span class="bar-divider" aria-hidden="true"></span>
+    <div class="flex items-center gap-0.5">
       <button type="button" class="icon-btn" id="btn-undo" aria-label="Undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
       <button type="button" class="icon-btn" id="btn-redo" aria-label="Redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
     </div>
-    <div class="appbar-spacer"></div>
+    <div class="flex-1"></div>
+    <div class="appbar-tools">
+      <label class="sr-only" for="canvas-zoom">Canvas zoom</label>
+      <select id="canvas-zoom" class="select compact zoom-select" title="Canvas zoom. 100% shows one sequence pixel per screen pixel.">
+        <option value="fit">Fit</option>
+        <option value="0.5">50%</option>
+        <option value="1">100%</option>
+        <option value="2">200%</option>
+      </select>
+      <button type="button" class="format-badge" id="format-badge" popovertarget="format-pop" aria-haspopup="dialog" title="Sequence format">
+        <span id="format-res">1080p</span><span class="format-dot" aria-hidden="true"></span><span id="format-fps">30fps</span>
+        <svg class="i caret"><use href="#i-chevron-down"/></svg>
+      </button>
+      <div id="format-pop" class="popover" popover aria-labelledby="format-pop-title">
+        <h2 class="pop-title" id="format-pop-title">Sequence format</h2>
+        <div class="pop-row">
+          <span class="pop-label" id="aspect-label">Aspect</span>
+          <div class="seg fill" role="radiogroup" aria-labelledby="aspect-label" id="aspect-group">
+            <button type="button" role="radio" data-aspect="16:9" aria-checked="true">16:9</button>
+            <button type="button" role="radio" data-aspect="9:16" aria-checked="false">9:16</button>
+            <button type="button" role="radio" data-aspect="1:1" aria-checked="false">1:1</button>
+            <button type="button" role="radio" data-aspect="4:5" aria-checked="false">4:5</button>
+          </div>
+        </div>
+        <div class="pop-row">
+          <span class="pop-label" id="fps-label">Frame rate</span>
+          <div class="seg fill" role="radiogroup" aria-labelledby="fps-label" id="fps-group">
+            <button type="button" role="radio" data-fps="24" aria-checked="false">24</button>
+            <button type="button" role="radio" data-fps="25" aria-checked="false">25</button>
+            <button type="button" role="radio" data-fps="30" aria-checked="true">30</button>
+            <button type="button" role="radio" data-fps="50" aria-checked="false">50</button>
+            <button type="button" role="radio" data-fps="60" aria-checked="false">60</button>
+          </div>
+        </div>
+        <p class="pop-note tabular" id="format-note"></p>
+      </div>
+    </div>
+    <span class="bar-divider" aria-hidden="true"></span>
     <button type="button" class="btn ghost" id="btn-new"><svg class="i"><use href="#i-new"/></svg><span>New</span></button>
     <button type="button" class="icon-btn" id="btn-shortcuts" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><svg class="i"><use href="#i-keyboard"/></svg></button>
-    <button type="button" class="btn primary" id="btn-export"><svg class="i"><use href="#i-download"/></svg><span>Export</span></button>
+    <button type="button" class="btn primary export-cta" id="btn-export"><svg class="i"><use href="#i-download"/></svg><span>Export</span></button>
   </header>
 
   <main class="workspace" id="workspace">
-    <section class="panel bin" aria-label="Library">
-      <div class="tabs" role="tablist" aria-label="Library">
+    <nav class="rail" id="rail" aria-label="Library">
+      <div class="rail-tabs" role="tablist" aria-orientation="vertical" aria-label="Library panels">
         <button type="button" role="tab" id="tab-media" aria-controls="pane-media" aria-selected="true"><svg class="i"><use href="#i-film"/></svg><span>Media</span></button>
         <button type="button" role="tab" id="tab-text" aria-controls="pane-text" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-type"/></svg><span>Text</span></button>
+        <button type="button" role="tab" id="tab-transitions" aria-controls="pane-transitions" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-transition"/></svg><span>Transitions</span></button>
+        <button type="button" role="tab" id="tab-effects" aria-controls="pane-effects" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-effects"/></svg><span>Effects</span></button>
         <button type="button" role="tab" id="tab-stickers" aria-controls="pane-stickers" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-shapes"/></svg><span>Stickers</span></button>
         <button type="button" role="tab" id="tab-audio" aria-controls="pane-audio" aria-selected="false" tabindex="-1"><svg class="i"><use href="#i-wave"/></svg><span>Audio</span></button>
       </div>
+    </nav>
+
+    <section class="drawer" id="drawer" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <h2 id="drawer-title">Media</h2>
+        <button type="button" class="icon-btn sm" id="drawer-close" aria-label="Collapse panel" aria-controls="drawer" aria-expanded="true" title="Collapse panel (click the active rail icon to reopen)"><svg class="i"><use href="#i-chevrons-left"/></svg></button>
+      </div>
       <div class="pane" role="tabpanel" id="pane-media" aria-labelledby="tab-media"></div>
       <div class="pane" role="tabpanel" id="pane-text" aria-labelledby="tab-text" hidden></div>
+      <div class="pane" role="tabpanel" id="pane-transitions" aria-labelledby="tab-transitions" hidden></div>
+      <div class="pane" role="tabpanel" id="pane-effects" aria-labelledby="tab-effects" hidden></div>
       <div class="pane" role="tabpanel" id="pane-stickers" aria-labelledby="tab-stickers" hidden></div>
       <div class="pane" role="tabpanel" id="pane-audio" aria-labelledby="tab-audio" hidden></div>
     </section>
 
     <section class="monitor" aria-label="Program monitor">
       <div class="stage" id="stage">
-        <div class="frame" id="frame">
-          <canvas id="program" class="program" aria-label="Program output"></canvas>
-          <canvas id="overlay" class="overlay" tabindex="0" aria-label="Program monitor. Drag to move the selected layer; corner handles scale, the top handle rotates. Arrow keys nudge."></canvas>
+        <div class="stage-inner" id="stage-inner">
+          <div class="frame" id="frame">
+            <canvas id="program" class="program" aria-label="Program output"></canvas>
+            <canvas id="overlay" class="overlay" tabindex="0" aria-label="Program monitor. Drag to move the selected layer; corner handles scale, the top handle rotates. Arrow keys nudge."></canvas>
+          </div>
         </div>
         <div class="empty-stage" id="empty-stage">
           <h1>Drop footage to start cutting</h1>
           <p>Video, images and audio open straight from your disk. Nothing is uploaded: every frame stays in this tab.</p>
           <div class="empty-actions">
-            <button type="button" class="btn bone" id="empty-import"><svg class="i"><use href="#i-import"/></svg><span>Import media</span></button>
-            <button type="button" class="btn ghost" id="empty-demo"><svg class="i"><use href="#i-sparkles"/></svg><span>Build a demo cut</span></button>
+            <button type="button" class="btn light" id="empty-import"><svg class="i"><use href="#i-import"/></svg><span>Import media</span></button>
+            <button type="button" class="btn" id="empty-demo"><svg class="i"><use href="#i-sparkles"/></svg><span>Build a demo cut</span></button>
           </div>
           <p class="empty-formats">MP4 · WebM · MOV · PNG · JPG · MP3 · WAV</p>
         </div>
@@ -133,20 +184,20 @@
           <span id="tc-dur" class="tc tc-dur" aria-label="Sequence duration">00:00:00:00</span>
         </div>
         <div class="transport-btns">
-          <button type="button" class="icon-btn" id="tp-start" aria-label="Go to start (Home)"><svg class="i"><use href="#i-start"/></svg></button>
-          <button type="button" class="icon-btn" id="tp-back" aria-label="Back one frame (Left arrow)"><svg class="i"><use href="#i-back"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-start" aria-label="Go to start (Home)" title="Go to start (Home)"><svg class="i"><use href="#i-start"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-back" aria-label="Back one frame (Left arrow)" title="Back one frame (←)"><svg class="i"><use href="#i-back"/></svg></button>
           <button type="button" class="play-btn" id="tp-play" aria-label="Play (Space)"><svg class="i"><use href="#i-play"/></svg></button>
-          <button type="button" class="icon-btn" id="tp-fwd" aria-label="Forward one frame (Right arrow)"><svg class="i"><use href="#i-fwd"/></svg></button>
-          <button type="button" class="icon-btn" id="tp-end" aria-label="Go to end (End)"><svg class="i"><use href="#i-end"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-fwd" aria-label="Forward one frame (Right arrow)" title="Forward one frame (→)"><svg class="i"><use href="#i-fwd"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-end" aria-label="Go to end (End)" title="Go to end (End)"><svg class="i"><use href="#i-end"/></svg></button>
         </div>
         <div class="transport-right">
-          <button type="button" class="icon-btn" id="tp-loop" aria-label="Loop playback" aria-pressed="false"><svg class="i"><use href="#i-loop"/></svg></button>
-          <button type="button" class="icon-btn" id="tp-guides" aria-label="Safe-zone guides (G)" aria-pressed="false"><svg class="i"><use href="#i-guides"/></svg></button>
-          <label class="sr-only" for="tp-quality">Preview quality</label>
-          <select id="tp-quality" class="select compact" title="Preview resolution. Auto renders at your screen's real pixel size for the sharpest picture; exports always render at full resolution.">
-            <option value="auto">Auto · sharp</option>
+          <button type="button" class="icon-btn" id="tp-loop" aria-label="Loop playback" aria-pressed="false" title="Loop playback"><svg class="i"><use href="#i-loop"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-guides" aria-label="Safe-zone guides (G)" aria-pressed="false" title="Safe-zone guides (G)"><svg class="i"><use href="#i-guides"/></svg></button>
+          <label class="sr-only" for="tp-quality">Preview resolution</label>
+          <select id="tp-quality" class="select compact" title="Preview resolution. Full renders every frame at the sequence resolution; exports always render at full resolution.">
             <option value="1">Full</option>
             <option value="0.5">Half</option>
+            <option value="0.25">Quarter</option>
           </select>
           <div class="volume">
             <label class="sr-only" for="tp-volume">Master volume</label>
@@ -154,12 +205,12 @@
             <input type="range" id="tp-volume" min="0" max="100" value="90" class="range">
             <canvas id="meter" class="meter" width="44" height="14" aria-hidden="true"></canvas>
           </div>
-          <button type="button" class="icon-btn" id="tp-full" aria-label="Full-screen monitor"><svg class="i"><use href="#i-expand"/></svg></button>
+          <button type="button" class="icon-btn" id="tp-full" aria-label="Full-screen monitor" title="Full screen"><svg class="i"><use href="#i-expand"/></svg></button>
         </div>
       </div>
     </section>
 
-    <aside class="panel inspector" aria-label="Inspector" id="inspector"></aside>
+    <aside class="inspector" aria-label="Inspector" id="inspector"></aside>
 
     <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" aria-label="Resize timeline" tabindex="0"></div>
 
@@ -170,7 +221,7 @@
           <button type="button" class="icon-btn razor" role="radio" id="tool-razor" aria-checked="false" aria-label="Razor tool (C)" title="Razor (C)"><svg class="i"><use href="#i-razor"/></svg></button>
         </div>
         <span class="tl-divider" aria-hidden="true"></span>
-        <button type="button" class="icon-btn" id="act-split" title="Split at playhead (S)" aria-label="Split at playhead (S)"><svg class="i"><use href="#i-split"/></svg></button>
+        <button type="button" class="icon-btn" id="act-split" title="Split at playhead (Ctrl+B or S)" aria-label="Split at playhead (Ctrl+B)"><svg class="i"><use href="#i-split"/></svg></button>
         <button type="button" class="icon-btn" id="act-duplicate" title="Duplicate (Ctrl+D)" aria-label="Duplicate (Ctrl+D)"><svg class="i"><use href="#i-duplicate"/></svg></button>
         <button type="button" class="icon-btn" id="act-delete" title="Delete (Del)" aria-label="Delete (Delete)"><svg class="i"><use href="#i-trash"/></svg></button>
         <button type="button" class="icon-btn" id="act-ripple" title="Ripple delete (Shift+Del)" aria-label="Ripple delete (Shift+Delete)"><svg class="i"><use href="#i-ripple"/></svg></button>
@@ -180,10 +231,10 @@
         <button type="button" class="btn ghost small" id="act-add-v" title="Add a video track"><svg class="i"><use href="#i-plus"/></svg><span>Video track</span></button>
         <button type="button" class="btn ghost small" id="act-add-a" title="Add an audio track"><svg class="i"><use href="#i-plus"/></svg><span>Audio track</span></button>
         <div class="tl-spacer-flex"></div>
-        <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out (-)"><svg class="i"><use href="#i-zoom-out"/></svg></button>
+        <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out (-)" title="Zoom out (-)"><svg class="i"><use href="#i-zoom-out"/></svg></button>
         <label class="sr-only" for="zoom-slider">Timeline zoom</label>
         <input type="range" id="zoom-slider" class="range zoom" min="0" max="1000" value="500">
-        <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in (=)"><svg class="i"><use href="#i-zoom-in"/></svg></button>
+        <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in (=)" title="Zoom in (=)"><svg class="i"><use href="#i-zoom-in"/></svg></button>
         <button type="button" class="icon-btn" id="zoom-fit" aria-label="Zoom to fit (Shift+Z)" title="Zoom to fit (Shift+Z)"><svg class="i"><use href="#i-fit"/></svg></button>
       </div>
       <div class="tl-body">
@@ -196,7 +247,7 @@
           <canvas id="tl-overlay" class="tl-overlay" aria-hidden="true"></canvas>
         </div>
       </div>
-      <p id="tl-help" class="sr-only">Click a clip to select it, drag to move, drag its edges to trim. Space plays, S splits at the playhead, Delete removes, Shift plus Delete ripple-deletes, arrow keys step one frame, up and down jump between edit points.</p>
+      <p id="tl-help" class="sr-only">Click a clip to select it, drag to move, drag its edges to trim. Space plays, Ctrl+B or S splits at the playhead, Delete removes, Shift plus Delete ripple-deletes, arrow keys step one frame, up and down jump between edit points.</p>
       <div id="tl-live" class="sr-only" aria-live="polite"></div>
     </section>
   </main>
@@ -206,8 +257,9 @@
     <span class="status-item" id="st-blobs">0 object URLs live</span>
     <span class="status-item" id="st-engine">Engine starting…</span>
     <span class="status-item tabular" id="st-voice" hidden></span>
-    <span class="status-spacer"></span>
-    <span class="status-item" id="st-drift" hidden></span>
+    <span class="flex-1"></span>
+    <span class="status-item tabular" id="st-drift" hidden></span>
+    <span class="status-item tabular" id="st-perf" title="Display frame rate and compositing time per frame"></span>
     <span class="status-item tabular" id="st-format">1920×1080 · 30 fps</span>
   </footer>
 </div>
@@ -269,7 +321,7 @@
       <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one frame (Shift: 1 second)</dd></div>
       <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous / next edit point</dd></div>
       <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Start / end of sequence</dd></div>
-      <div><dt><kbd>S</kbd></dt><dd>Split at playhead</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>B</kbd></dt><dd>Split at playhead (also <kbd>S</kbd>)</dd></div>
       <div><dt><kbd>V</kbd> <kbd>C</kbd></dt><dd>Select tool · razor tool</dd></div>
       <div><dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Duplicate selection</dd></div>
       <div><dt><kbd>Del</kbd></dt><dd>Delete selection</dd></div>

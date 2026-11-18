@@ -6,7 +6,7 @@ import { LUT_PRESETS, parseCube } from '../engine/luts.js';
 import { SHAPES } from '../engine/stickers.js';
 import {
   TEXT_FONTS, ANIM_IN, ANIM_OUT, DEFAULT_FX, DEFAULT_TRANSFORM, isVisual, isMedia, overwriteRange, clipEnd, maxTimelineDuration,
-  effectiveAnimDurations, MIN_ANIM,
+  effectiveAnimDurations, MIN_ANIM, TRANSITIONS, prevAdjacent,
 } from '../core/ops.js';
 import { ALIGN_MODES, alignClips } from './align.js';
 import { FPS_OPTIONS } from '../core/store.js';
@@ -101,6 +101,14 @@ export class Inspector {
     };
     range.addEventListener('input', () => { set(Number(range.value)); this.#touch(); update(); });
     range.addEventListener('change', () => this.#commit(commit || label));
+    num.addEventListener('input', () => {
+      if (!num.classList.contains('scrubbing')) return; // typed values apply on change
+      const v = Number(num.value);
+      if (!Number.isFinite(v)) return;
+      set(clamp(v, min, maxOf()));
+      this.#touch();
+      update();
+    });
     num.addEventListener('change', () => {
       const v = Number(num.value);
       if (!Number.isFinite(v)) { update(); return; }
@@ -313,10 +321,13 @@ export class Inspector {
     if (clip0.kind === 'text' || clip0.kind === 'sticker') {
       out.push(clip0.kind === 'text' ? this.#textSection(C) : this.#stickerSection(C));
       out.push(this.#transformSection(C, clip0), this.#animSection(C, clip0), timingSec);
+      const trSec = this.#transitionSection(C);
+      if (trSec) out.push(trSec);
       if (clip0.kind === 'text' && this.voice) out.push(this.#voiceSection(C));
       return out;
     }
     out.push(timingSec);
+    if (isMedia(clip0)) { const trSec = this.#transitionSection(C); if (trSec) out.push(trSec); }
     if (clip0.kind === 'audio' && asset?.source === 'voice') out.push(this.#voiceInfo(C, asset));
     if (isVisual(clip0)) out.push(this.#transformSection(C, clip0));
     if (isVisual(clip0)) out.push(this.#animSection(C, clip0));
@@ -557,6 +568,23 @@ export class Inspector {
     ]);
   }
 
+  /** Transition into this clip from the one that ends where it starts (only shown when there is one). */
+  #transitionSection(C) {
+    const project = () => this.store.project;
+    const prev = prevAdjacent(project(), C());
+    if (!prev) return null;
+    const T = () => C().transition || { type: 'none', duration: 0.5 };
+    const on = () => T().type && T().type !== 'none';
+    return this.#section('Transition in', [
+      this.#select({ label: 'Type', options: TRANSITIONS, get: () => T().type, set: (v) => {
+        if (v === 'none') delete C().transition;
+        else C().transition = { type: v, duration: Math.min(C().transition?.duration || 0.5, C().duration) };
+      }, commit: 'Transition' }),
+      this.#slider({ label: 'Duration', min: 0.1, max: () => Math.max(0.15, Math.min(2, C().duration)), step: 0.05, get: () => T().duration, set: (v) => { if (on()) C().transition.duration = v; }, commit: 'Transition duration', def: 0.5, unit: 'seconds', disabled: () => !on() }),
+      h('p', { class: 'insp-note', text: `Blends in from "${prev.name || prev.kind}". The outgoing clip keeps playing underneath for the length of the transition.` }),
+    ], this.openPanel ? this.#linkBtn('Browse', () => this.openPanel('tab-transitions')) : null);
+  }
+
   #colorSection(C) {
     const F = () => C().fx;
     const presets = [...LUT_PRESETS, ...customLuts];
@@ -614,6 +642,7 @@ export class Inspector {
       const id = `custom:${uid('l')}`;
       const name = (title || file.name.replace(/\.cube$/i, '')).slice(0, 40);
       this.glfx.registerCustomLut(id, size, data);
+      this.renderer?.gpu?.registerCustomLut(id, size, data);
       customLuts.push({ id, name });
       const c = this.clipId && this.store.getClip(this.clipId);
       if (c && isMedia(c)) { c.fx.lut = id; c.fx.lutAmount = 100; this.store.commit(`Look: ${name}`); }

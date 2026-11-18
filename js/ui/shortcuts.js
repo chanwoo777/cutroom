@@ -33,6 +33,7 @@ export function installShortcuts({ store, actions, playback, timeline, monitor, 
         case 'z': if (e.shiftKey) actions.redo(); else actions.undo(); break;
         case 'y': actions.redo(); break;
         case 'd': actions.duplicateSelected(); break;
+        case 'b': actions.splitAtPlayhead(); break;
         case 'a': actions.selectAll(); break;
         case 'e': exporter.open(); break;
         default: handled = false;

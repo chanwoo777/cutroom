@@ -2,6 +2,7 @@
 // video elements chase it. Drift above 30 ms is corrected by nudging playbackRate (±15%); above 250 ms
 // we hard-seek. While paused, seeks are coalesced so scrubbing never queues a backlog of decodes.
 import { clamp } from '../util.js';
+import { tailDuration } from '../core/ops.js';
 
 const LEAD = 0.05;          // seconds of headroom when scheduling audio
 const NUDGE_AT = 0.03;      // start correcting drift
@@ -23,6 +24,13 @@ export class Playback {
     this.anchorClock = 0;
     this.drift = 0;
     this.suspended = false; // true while the frame-accurate exporter drives the videos
+    this.onRelease = null;  // GPU texture cleanup hook (set by main)
+  }
+
+  /** Seconds the clip stays on screen after its end because the next clip transitions out of it. */
+  #tail(project, c, t) {
+    const end = c.start + c.duration;
+    return t >= end - 0.001 && t < end + 5 ? tailDuration(project, c) : 0;
   }
 
   clockNow() { return this.useAudioClock ? this.audio.ctx.currentTime : performance.now() / 1000; }
@@ -114,7 +122,7 @@ export class Playback {
       const tr = tracks.get(c.trackId);
       const asset = this.assets.get(c.assetId);
       if (!tr || !asset || asset.status !== 'ready') continue;
-      const end = c.start + c.duration;
+      const end = c.start + c.duration + this.#tail(project, c, t);
       const active = !tr.hidden && t >= c.start && t < end;
       const upcoming = !tr.hidden && !active && c.start >= t && c.start - t <= lookahead;
       if (active) {
@@ -194,10 +202,24 @@ export class Playback {
     v.playsInline = true;
     v.preload = 'auto';
     v.disablePictureInPicture = true;
-    v._cr = { assetId: asset.id, seeking: false, pending: null, since: 0 };
+    // frameSerial ticks whenever the element has a new picture, so the compositor uploads a texture
+    // only for frames that changed (requestVideoFrameCallback), not on every display refresh.
+    v._cr = { assetId: asset.id, seeking: false, pending: null, since: 0, frameSerial: 0, lastFrameAt: 0, rvfcOk: typeof v.requestVideoFrameCallback === 'function' };
+    if (v._cr.rvfcOk) {
+      const onFrame = (_now, meta) => {
+        const st = v._cr;
+        st.frameSerial++;
+        st.lastFrameAt = performance.now();
+        st.mediaTime = meta?.mediaTime;
+        this.onDirty();
+        if (this.videos.get(c.id) === v) v.requestVideoFrameCallback(onFrame);
+      };
+      v.requestVideoFrameCallback(onFrame);
+    }
     v.addEventListener('seeked', () => {
       const st = v._cr;
       st.seeking = false;
+      st.frameSerial++;
       this.onDirty();
       if (st.pending != null) { const p = st.pending; st.pending = null; this.#requestSeek(v, p); }
     });
@@ -205,7 +227,7 @@ export class Playback {
       const st = v._cr;
       if (st.pending != null) { const p = st.pending; st.pending = null; this.#requestSeek(v, p); }
     });
-    v.addEventListener('loadeddata', () => this.onDirty());
+    v.addEventListener('loadeddata', () => { v._cr.frameSerial++; this.onDirty(); });
     v.src = asset.url;
     this.pool?.append(v);
     if (elementAudio) this.audio.attachElement(c.id, v);
@@ -225,6 +247,7 @@ export class Playback {
     v.remove();
     this.videos.delete(id);
     this.glfx?.deleteTex(id);
+    this.onRelease?.(id);
   }
 
   releaseAll() { for (const id of [...this.videos.keys()]) this.release(id); }
@@ -242,7 +265,7 @@ export class Playback {
       if (c.kind !== 'video') continue;
       const tr = tracks.get(c.trackId);
       const asset = this.assets.get(c.assetId);
-      if (!tr || tr.hidden || !asset || asset.status !== 'ready' || t < c.start || t >= c.start + c.duration) continue;
+      if (!tr || tr.hidden || !asset || asset.status !== 'ready' || t < c.start || t >= c.start + c.duration + this.#tail(project, c, t)) continue;
       const v = this.#ensure(c, asset);
       if (!v.paused) v.pause();
       // Aim slightly inside the frame so float error never lands on the previous frame's boundary.
@@ -251,7 +274,7 @@ export class Playback {
     }
     const n = (await Promise.all(waits)).filter(Boolean).length;
     // Drop decoders for clips that are behind us so long exports do not pile up video elements.
-    for (const c of project.clips) if (c.kind === 'video' && c.start + c.duration < t - 1) this.release(c.id);
+    for (const c of project.clips) if (c.kind === 'video' && c.start + c.duration < t - 6) this.release(c.id);
     return n;
   }
 

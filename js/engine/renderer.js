@@ -2,7 +2,8 @@
 // Picture tracks render bottom (V1) to top. Media goes through the WebGL2 grade; text and stickers are
 // drawn with Canvas 2D (fillText), so user text never touches the DOM as markup.
 import { clamp, easeOutCubic, easeOutBack, roundRectPath } from '../util.js';
-import { activeClipAt, TEXT_FONTS, effectiveAnimDurations, migrateClip } from '../core/ops.js';
+import { activeClipAt, TEXT_FONTS, effectiveAnimDurations, migrateClip, trackLayers, transitionMods } from '../core/ops.js';
+import { Compositor } from './compositor.js';
 import { drawSticker, stickerAspect } from './stickers.js';
 import { FALLBACK_FILTERS } from './luts.js';
 
@@ -57,7 +58,9 @@ function filterString(fx) {
 export class Renderer {
   constructor({ canvas, store, assets, playback, glfx }) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    // One context per canvas: the WebGL2 compositor when available, Canvas 2D otherwise.
+    this.gpu = Compositor.create(canvas, this);
+    this.ctx = this.gpu ? null : canvas.getContext('2d', { alpha: false });
     this.store = store;
     this.assets = assets;
     this.playback = playback;
@@ -175,7 +178,23 @@ export class Renderer {
     return { cx: tr.x * W, cy: tr.y * H, bw, bh, w: bw * s, h: bh * s, rot: ((tr.rotation || 0) * Math.PI) / 180, metrics };
   }
 
+  get backend() { return this.gpu ? 'webgl2' : '2d'; }
+
+  animFor(clip, t) { return clip.id === this.editingId ? IDENTITY_ANIM : computeAnim(clip, t); }
+
+  /** Wait for the GPU to finish the frame (benchmarks). */
+  flush() {
+    if (this.gpu) this.gpu.finish();
+    else this.ctx.getImageData(0, 0, 1, 1);
+  }
+
   render(t) {
+    this.layouts.clear();
+    if (this.gpu) { this.gpu.render(t); return; }
+    this.#render2d(t);
+  }
+
+  #render2d(t) {
     const { ctx, canvas, store } = this;
     const W = canvas.width, H = canvas.height;
     const project = store.project;
@@ -189,7 +208,6 @@ export class Renderer {
     const bg = project.background || { mode: 'black' };
     ctx.fillStyle = bg.mode === 'color' ? bg.color : '#000000';
     ctx.fillRect(0, 0, W, H);
-    this.layouts.clear();
 
     const vtracks = project.tracks.filter((tr) => tr.kind === 'video').reverse();
     if (bg.mode === 'blur') {
@@ -201,8 +219,7 @@ export class Renderer {
     }
     for (const tr of vtracks) {
       if (tr.hidden) continue;
-      const clip = activeClipAt(project, tr.id, t);
-      if (clip) this.#drawClip(clip, t, W, H);
+      for (const layer of trackLayers(project, tr.id, t)) this.#drawClip(layer, t, W, H);
     }
   }
 
@@ -262,29 +279,32 @@ export class Renderer {
     if (r) ctx.drawImage(r.canvas, r.sx, r.sy, r.sw, r.sh, (W - w) / 2, (H - h) / 2, w, h);
   }
 
-  #drawClip(clip, t, W, H) {
+  #drawClip(layer, t, W, H) {
+    const clip = layer.clip;
     const L = this.layout(clip, W, H);
-    this.layouts.set(clip.id, L);
+    if (layer.role !== 'out') this.layouts.set(clip.id, L);
     if (L.bw <= 0 || L.bh <= 0) return;
-    const A = clip.id === this.editingId ? IDENTITY_ANIM : computeAnim(clip, t);
-    const alpha = clamp((clip.transform.opacity ?? 1) * A.alpha, 0, 1);
+    const A = this.animFor(clip, layer.role === 'out' ? clip.start + clip.duration - 1e-4 : t);
+    const M = transitionMods(layer, W, H);
+    const alpha = clamp((clip.transform.opacity ?? 1) * A.alpha * M.alpha, 0, 1);
     if (alpha <= 0.002) return;
     const S = Math.min(W, H);
-    const scale = (clip.transform.scale ?? 1) * A.scale;
+    const scale = (clip.transform.scale ?? 1) * A.scale * M.scale;
     const { ctx } = this;
     ctx.save();
+    if (M.scissor) { ctx.beginPath(); ctx.rect(...M.scissor); ctx.clip(); }
     ctx.globalAlpha = alpha;
-    ctx.translate(L.cx, L.cy + A.dy * S);
+    ctx.translate(L.cx + M.dx, L.cy + A.dy * S + M.dy);
     if (L.rot) ctx.rotate(L.rot);
     ctx.scale(scale, scale);
     if (clip.kind === 'video' || clip.kind === 'image') this.#drawMedia(clip, L.bw, L.bh, scale, W, H);
-    else if (clip.kind === 'text') this.#drawText(clip.text, L.metrics, A.reveal);
+    else if (clip.kind === 'text') this.drawTextTo(ctx, clip.text, L.metrics, A.reveal);
     else if (clip.kind === 'sticker') drawSticker(ctx, clip.sticker, L.bw, L.bh);
     ctx.restore();
   }
 
-  #drawText(T, m, reveal) {
-    const { ctx } = this;
+  /** Draw text centred on the context origin (shared by the 2D path and the GPU text-texture cache). */
+  drawTextTo(ctx, T, m, reveal) {
     ctx.font = m.font;
     // Alphabetic baselines placed exactly where a CSS line box would put them (see measureText).
     ctx.textBaseline = m.cssMatched ? 'alphabetic' : 'middle';

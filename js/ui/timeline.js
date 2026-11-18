@@ -2,9 +2,9 @@
 // playhead, snap line, razor guide and marquee (redrawn every frame while playing). A native scroller
 // underneath provides the scroll extents and scrollbars; the canvases draw at its scroll offset.
 import { clamp, quantize, formatTC, cssVar, roundRectPath, easeOutExpo, reducedMotion } from '../util.js';
-import { clipEnd, overwriteRange, trackKindFor, linkedClips, effectiveAnimDurations, isVisual } from '../core/ops.js';
+import { clipEnd, overwriteRange, trackKindFor, linkedClips, effectiveAnimDurations, isVisual, transitionDuration } from '../core/ops.js';
 import { drawSticker } from '../engine/stickers.js';
-import { h, icon, sizeCanvas, announce } from './dom.js';
+import { h, icon, sizeCanvas, announce, setTimecode } from './dom.js';
 
 const TRACK_H = 60;
 const PAD = 4;
@@ -58,11 +58,12 @@ export class Timeline {
   #readColors() {
     const v = (n) => cssVar(n);
     return {
-      bg: v('--bg'), surface: v('--surface'), lane: '#1f1e1b', laneAlt: '#22211e', grid: 'rgba(236,231,220,0.05)',
-      slate: v('--slate'), slateDeep: v('--slate-deep'), ochre: v('--ochre'), ochreDeep: v('--ochre-deep'),
-      bone: v('--bone'), boneDeep: v('--bone-deep'), ink: v('--ink'), text: v('--text'), muted: v('--muted'),
-      faint: v('--faint'), accent: v('--accent'), focus: v('--focus'), border: v('--border'),
-      ui: v('--font-ui'), mono: v('--font-mono'),
+      bg: v('--color-base') || '#0b0d10', surface: v('--color-panel') || '#14171d', lane: '#101318', laneAlt: '#0d1014', grid: 'rgba(255,255,255,0.035)',
+      video: v('--color-video') || '#2d5596', videoBand: '#234479', audio: v('--color-audio') || '#1e6e52', audioWave: '#86e3ba',
+      overlay: v('--color-overlay') || '#6243b5', overlayBand: '#4f3496',
+      label: '#ffffff', text: v('--color-fg') || '#e7eaf0', muted: v('--color-muted') || '#9ba3b1',
+      faint: v('--color-faint') || '#7a8292', accent: v('--color-cut') || '#f0464c', focus: '#ffffff', border: 'rgba(255,255,255,0.06)',
+      ink: '#0b0d10', ui: v('--font-sans') || 'system-ui', mono: v('--font-mono') || 'monospace',
     };
   }
 
@@ -641,7 +642,7 @@ export class Timeline {
       if (tr.locked) {
         ctx.save();
         ctx.beginPath(); ctx.rect(0, y, w, TRACK_H); ctx.clip();
-        ctx.strokeStyle = 'rgba(236,231,220,0.035)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
         ctx.lineWidth = 6;
         for (let x = -TRACK_H; x < w + TRACK_H; x += 16) { ctx.beginPath(); ctx.moveTo(x, y + TRACK_H); ctx.lineTo(x + TRACK_H, y); ctx.stroke(); }
         ctx.restore();
@@ -655,7 +656,7 @@ export class Timeline {
     for (let i = Math.floor(t0 / major); i * major <= t1; i++) ctx.fillRect(Math.round(i * major * zoom - this.scrollX), 0, 1, h);
     const endX = Math.round(store.duration * zoom - this.scrollX);
     if (store.duration > 0 && endX > 0 && endX < w) {
-      ctx.fillStyle = 'rgba(236,231,220,0.12)';
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
       ctx.fillRect(endX, 0, 1, Math.min(h, tracks.length * TRACK_H - this.scrollY));
     }
 
@@ -695,9 +696,9 @@ export class Timeline {
 
   #palette(kind) {
     const c = this.c;
-    if (kind === 'audio') return { fill: c.ochre, band: null, label: c.ink, wave: c.ochreDeep };
-    if (kind === 'text' || kind === 'sticker') return { fill: c.bone, band: null, label: c.ink, wave: c.boneDeep };
-    return { fill: c.slate, band: c.slateDeep, label: c.bone, wave: 'rgba(236,231,220,0.75)' };
+    if (kind === 'audio') return { fill: c.audio, band: null, label: c.label, wave: c.audioWave };
+    if (kind === 'text' || kind === 'sticker') return { fill: c.overlay, band: c.overlayBand, label: c.label, wave: c.label };
+    return { fill: c.video, band: c.videoBand, label: c.label, wave: 'rgba(255,255,255,0.78)' };
   }
 
   #drawClip(ctx, clip, x, y, w, h, track) {
@@ -712,17 +713,18 @@ export class Timeline {
     ctx.clip();
     const bodyY = y + LABEL_H, bodyH = h - LABEL_H;
     if ((clip.kind === 'video' || clip.kind === 'image') && asset) {
-      this.#drawThumbs(ctx, clip, asset, x, bodyY, w, bodyH);
+      const tkey = asset.thumbs?.length ? `t|${asset.id}|${asset.thumbs.length}|${clip.in}|${clip.speed}|${this.zoom}|${bodyH}` : null;
+      this.#cached(ctx, tkey, x, bodyY, w, bodyH, (g, gx, gw) => this.#drawThumbs(g, clip, asset, gx, 0, gw, bodyH));
       if (clip.kind === 'video' && asset.peaks) {
         const bandH = 13;
-        ctx.fillStyle = 'rgba(20,19,17,0.55)';
+        ctx.fillStyle = 'rgba(11,13,16,0.6)';
         ctx.fillRect(x, y + h - bandH, w, bandH);
-        this.#drawWave(ctx, clip, asset.peaks, x, y + h - bandH, w, bandH, pal.wave);
+        this.#cached(ctx, this.#waveKey(clip, asset, bandH, pal.wave), x, y + h - bandH, w, bandH, (g, gx, gw) => this.#drawWave(g, clip, asset.peaks, gx, 0, gw, bandH, pal.wave));
       }
     } else if (clip.kind === 'audio' && asset?.peaks) {
-      this.#drawWave(ctx, clip, asset.peaks, x, bodyY, w, bodyH, pal.wave);
+      this.#cached(ctx, this.#waveKey(clip, asset, bodyH, pal.wave), x, bodyY, w, bodyH, (g, gx, gw) => this.#drawWave(g, clip, asset.peaks, gx, 0, gw, bodyH, pal.wave));
     } else if (clip.kind === 'text') {
-      ctx.fillStyle = 'rgba(28,27,25,0.7)';
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
       ctx.font = `600 12px ${c.ui}`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
@@ -735,8 +737,8 @@ export class Timeline {
       ctx.restore();
     }
     if (clip.fadeIn > 0 || clip.fadeOut > 0) {
-      ctx.strokeStyle = 'rgba(20,19,17,0.75)';
-      ctx.fillStyle = 'rgba(20,19,17,0.22)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillStyle = 'rgba(11,13,16,0.35)';
       ctx.lineWidth = 1.25;
       if (clip.fadeIn > 0) {
         const fx = Math.min(w, clip.fadeIn * this.zoom);
@@ -753,9 +755,8 @@ export class Timeline {
     if (isVisual(clip)) {
       // Entrance / exit ramps in the label band, each exactly as long as its own duration.
       const { intro, outro } = effectiveAnimDurations(clip);
-      const onDark = pal.label === c.bone;
-      ctx.fillStyle = onDark ? 'rgba(236,231,220,0.26)' : 'rgba(28,27,25,0.2)';
-      ctx.strokeStyle = onDark ? 'rgba(236,231,220,0.7)' : 'rgba(28,27,25,0.55)';
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
       ctx.lineWidth = 1;
       if (intro > 0) {
         const iw = Math.min(w, intro * this.zoom);
@@ -779,9 +780,19 @@ export class Timeline {
     const fx = clip.fx;
     if (fx && (fx.lut !== 'none' || fx.brightness || fx.contrast || fx.saturation || fx.blur || fx.sepia || fx.vignette) && (clip.kind === 'video' || clip.kind === 'image')) badges += ' · fx';
     if (w > 28) ctx.fillText(name + badges, lx, y + LABEL_H / 2 + 0.5);
+    const trD = transitionDuration(store.project, clip);
+    if (trD > 0) {
+      // Transition marker: the blend region at the clip head, crossed like a splice.
+      const tw = Math.min(w, trD * this.zoom);
+      ctx.fillStyle = 'rgba(11,13,16,0.42)';
+      ctx.fillRect(x, y, tw, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + 0.5, y + 0.5); ctx.lineTo(x + tw - 0.5, y + h - 0.5); ctx.moveTo(x + 0.5, y + h - 0.5); ctx.lineTo(x + tw - 0.5, y + 0.5); ctx.stroke();
+    }
     if (track.hidden || track.muted) {
       if ((track.hidden && clip.kind !== 'audio') || (track.muted && (clip.kind === 'audio' || clip.kind === 'video'))) {
-        ctx.fillStyle = 'rgba(20,19,17,0.5)';
+        ctx.fillStyle = 'rgba(11,13,16,0.55)';
         ctx.fillRect(x, y, w, h);
       }
     }
@@ -796,16 +807,59 @@ export class Timeline {
       roundRectPath(ctx, x - 1, y - 1, w + 2, h + 2, 4);
       ctx.stroke();
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(20,19,17,0.85)';
+      ctx.strokeStyle = 'rgba(11,13,16,0.9)';
       roundRectPath(ctx, x + 0.5, y + 0.5, Math.max(1, w - 1), h - 1, 3);
       ctx.stroke();
     }
   }
 
+  #waveKey(clip, asset, h, color) {
+    return `w|${asset.id}|${clip.in}|${clip.speed}|${clip.duration}|${clip.volume ?? 1}|${clip.fadeIn || 0}|${clip.fadeOut || 0}|${this.zoom}|${h}|${color}`;
+  }
+
+  /**
+   * Filmstrips and waveforms are rasterised once per clip into an OffscreenCanvas strip (device pixels)
+   * and blitted on every redraw, so scrolling, dragging and playhead updates never re-run the per-pixel
+   * work. Strips are keyed by everything that changes their pixels and evicted least-recently-used.
+   * Very wide clips (deep zoom) draw directly; the peak pyramid keeps that cheap.
+   */
+  #cached(ctx, key, x, y, w, h, draw) {
+    const dpr = this.dpr;
+    const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);
+    if (!key || typeof OffscreenCanvas === 'undefined' || pw > 4096 || pw < 1 || ph < 1) {
+      ctx.save();
+      ctx.translate(0, y);
+      draw(ctx, x, w);
+      ctx.restore();
+      return;
+    }
+    const cache = this.strips || (this.strips = new Map());
+    const k = `${key}|${dpr}|${pw}`;
+    let strip = cache.get(k);
+    if (strip) { cache.delete(k); cache.set(k, strip); } // LRU touch
+    else {
+      strip = new OffscreenCanvas(pw, ph);
+      const g = strip.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const saveW = this.w;
+      this.w = w; // draw the whole strip, not just the on-screen part
+      try { draw(g, 0, w); } finally { this.w = saveW; }
+      cache.set(k, strip);
+      let px = 0;
+      for (const v of cache.values()) px += v.width * v.height;
+      for (const [ok, v] of cache) {
+        if (px <= 24e6 && cache.size <= 120) break;
+        px -= v.width * v.height;
+        cache.delete(ok);
+      }
+    }
+    ctx.drawImage(strip, 0, 0, strip.width, strip.height, x, y, pw / dpr, ph / dpr);
+  }
+
   #drawThumbs(ctx, clip, asset, x, y, w, h) {
     const thumbs = asset.thumbs;
     if (!thumbs?.length) {
-      ctx.fillStyle = 'rgba(20,19,17,0.25)';
+      ctx.fillStyle = 'rgba(11,13,16,0.3)';
       for (let sx = x - h; sx < x + w; sx += 12) { ctx.beginPath(); ctx.moveTo(sx, y + h); ctx.lineTo(sx + 6, y + h); ctx.lineTo(sx + 6 + h, y); ctx.lineTo(sx + h, y); ctx.fill(); }
       return;
     }
@@ -826,13 +880,19 @@ export class Timeline {
   }
 
   #drawWave(ctx, clip, peaks, x, y, w, h, color) {
-    const { data, perSec } = peaks;
+    // Pick the pyramid level with about one bucket per pixel (never coarser than one per pixel).
+    const pxPerSrcSec = this.zoom / clip.speed;
+    let level = peaks.levels ? peaks.levels[0] : peaks;
+    if (peaks.levels) for (const L of peaks.levels) { if (L.perSec >= pxPerSrcSec) level = L; else break; }
+    const { data, perSec } = level;
     const mid = y + h / 2;
     const x0 = Math.max(Math.floor(x), 0), x1 = Math.min(x + w, this.w);
+    if (x1 <= x0) return;
     const vol = clip.volume ?? 1;
     const fi = clip.fadeIn || 0, fo = clip.fadeOut || 0, D = clip.duration;
-    ctx.fillStyle = color;
-    for (let px = x0; px < x1; px++) {
+    const amp = new Float32Array(Math.ceil(x1 - x0));
+    let n = 0;
+    for (let px = x0; px < x1; px++, n++) {
       const lt = (px - x) / this.zoom;
       const ta = clip.in + lt * clip.speed;
       const tb = clip.in + ((px + 1 - x) / this.zoom) * clip.speed;
@@ -842,9 +902,20 @@ export class Timeline {
       let m = 0;
       for (let i = Math.max(0, ia); i < ib; i++) if (data[i] > m) m = data[i];
       const env = Math.min(1, fi > 0 ? lt / fi : 1, fo > 0 ? (D - lt) / fo : 1);
-      const a = Math.min(1, m * vol * Math.max(0, env)) * (h / 2 - 1);
-      ctx.fillRect(px, mid - a, 1, Math.max(1, a * 2));
+      amp[n] = Math.max(0.5, Math.min(1, m * vol * Math.max(0, env)) * (h / 2 - 1));
     }
+    if (!n) return;
+    // One mirrored polygon instead of a rectangle per pixel.
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x0, mid - amp[0]);
+    for (let i = 1; i < n; i++) ctx.lineTo(x0 + i + 0.5, mid - amp[i]);
+    ctx.lineTo(x0 + n, mid - amp[n - 1]);
+    ctx.lineTo(x0 + n, mid + amp[n - 1]);
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(x0 + i + 0.5, mid + amp[i]);
+    ctx.lineTo(x0, mid + amp[0]);
+    ctx.closePath();
+    ctx.fill();
   }
 
   drawOverlay() {
@@ -856,10 +927,10 @@ export class Timeline {
       const g = this.dropGhost;
       const x = g.start * zoom - this.scrollX, cw = Math.max(4, g.duration * zoom), y = g.ti * TRACK_H - this.scrollY + PAD;
       roundRectPath(ctx, x, y, cw, TRACK_H - PAD * 2, 3);
-      ctx.fillStyle = 'rgba(230,224,210,0.14)';
+      ctx.fillStyle = 'rgba(231,234,240,0.12)';
       ctx.fill();
       ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = c.bone;
+      ctx.strokeStyle = c.text;
       ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.setLineDash([]);
@@ -868,16 +939,16 @@ export class Timeline {
     if (d?.type === 'marquee' && d.active) {
       const x0 = Math.min(d.sx, d.cx) - this.scrollX, y0 = Math.min(d.sy, d.cy) - this.scrollY;
       const mw = Math.abs(d.cx - d.sx), mh = Math.abs(d.cy - d.sy);
-      ctx.fillStyle = 'rgba(230,224,210,0.07)';
+      ctx.fillStyle = 'rgba(138,180,248,0.08)';
       ctx.fillRect(x0, y0, mw, mh);
-      ctx.strokeStyle = 'rgba(230,224,210,0.6)';
+      ctx.strokeStyle = 'rgba(138,180,248,0.7)';
       ctx.lineWidth = 1;
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, mw, mh);
     }
     if (this.snapLine != null) {
       const x = Math.round(this.snapLine * zoom - this.scrollX) + 0.5;
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = c.bone;
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = c.accent;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
       ctx.setLineDash([]);
@@ -891,8 +962,9 @@ export class Timeline {
     }
     const px = Math.round(store.time * zoom - this.scrollX);
     if (px >= -2 && px <= w + 2) {
+      // The playhead: one device-crisp hairline of cut red.
       ctx.fillStyle = c.accent;
-      ctx.fillRect(px - 1, 0, 2, h);
+      ctx.fillRect(px, 0, Math.max(1, 1.5 / dpr * Math.ceil(dpr)), h);
     }
   }
 
@@ -918,16 +990,14 @@ export class Timeline {
       ctx.fillStyle = c.muted;
       ctx.fillText(formatTC(t, fps), x + 4, 6);
     }
-    const px = store.time * zoom - this.scrollX;
+    const px = Math.round(store.time * zoom - this.scrollX);
     if (px > -10 && px < w + 10) {
-      // the playhead: a red paper flag with a notched point
+      // Playhead head: a small square-shouldered marker that narrows to the hairline below it.
       ctx.fillStyle = c.accent;
       ctx.beginPath();
-      ctx.moveTo(px - 6, 11); ctx.lineTo(px + 6, 11); ctx.lineTo(px + 6, 21); ctx.lineTo(px, 29); ctx.lineTo(px - 6, 21);
+      ctx.moveTo(px - 5, 12); ctx.lineTo(px + 6, 12); ctx.lineTo(px + 6, 20); ctx.lineTo(px + 1, 26); ctx.lineTo(px + 1, H); ctx.lineTo(px, H); ctx.lineTo(px, 26); ctx.lineTo(px - 5, 20);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = 'rgba(20,19,17,0.55)';
-      ctx.beginPath(); ctx.moveTo(px - 6, 11); ctx.lineTo(px - 2, 11); ctx.lineTo(px - 6, 15); ctx.closePath(); ctx.fill();
     }
   }
 
@@ -948,6 +1018,6 @@ export class Timeline {
     if (this.dirtyBase) { this.drawBase(); this.dirtyBase = false; this.dirtyOver = true; }
     if (this.dirtyOver) { this.drawOverlay(); this.drawRuler(); this.dirtyOver = false; }
     const tc = formatTC(store.time, this.fps);
-    if (tc !== this.lastTc) { this.el.tc.textContent = tc; this.lastTc = tc; }
+    if (tc !== this.lastTc) { setTimecode(this.el.tc, tc); this.lastTc = tc; }
   }
 }

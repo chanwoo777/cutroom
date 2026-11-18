@@ -1,0 +1,14 @@
+{
+  "name": "cutroom",
+  "private": true,
+  "type": "module",
+  "description": "In-browser video editor. The site itself has no build step; this file only pins the Tailwind CSS compiler used to regenerate css/app.css.",
+  "scripts": {
+    "build:css": "tailwindcss -i tools/tailwind.css -o css/app.css --minify",
+    "watch:css": "tailwindcss -i tools/tailwind.css -o css/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "tailwindcss": "4.3.3"
+  }
+}
