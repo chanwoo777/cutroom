@@ -275,6 +275,13 @@
   </div>
   <div class="dlg-body" id="export-settings">
     <div class="field-grid">
+      <label for="ex-preset">Preset</label>
+      <select id="ex-preset" class="select">
+        <option value="custom">Custom</option>
+        <option value="standard">Standard · sequence size, small file</option>
+        <option value="youtube4k">YouTube 4K · upscaled and sharpened</option>
+        <option value="master">Master · near-lossless</option>
+      </select>
       <label for="ex-engine">Engine</label>
       <select id="ex-engine" class="select"></select>
       <label for="ex-res">Resolution</label>
@@ -288,6 +295,7 @@
         <button type="button" role="radio" data-q="draft" aria-checked="false">Draft</button>
         <button type="button" role="radio" data-q="standard" aria-checked="true">Standard</button>
         <button type="button" role="radio" data-q="high" aria-checked="false">High</button>
+        <button type="button" role="radio" data-q="master" aria-checked="false">Master</button>
       </div>
       <div class="field-grid-row" id="ex-monitor-row">
         <span class="field-label">Audio</span>

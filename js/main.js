@@ -36,6 +36,7 @@ const playback = new Playback({ store, assets, audio, glfx, pool: $('media-pool'
 const renderer = new Renderer({ canvas: $('program'), store, assets, playback, glfx });
 const actions = createActions({ store, assets, playback, glfx });
 playback.onRelease = (id) => renderer.gpu?.deleteMedia(id);
+playback.gpu = renderer.gpu;
 
 /**
  * Preview resolution. The program canvas's backing store is the sequence resolution itself (1920x1080,
@@ -43,11 +44,15 @@ playback.onRelease = (id) => renderer.gpu?.deleteMedia(id);
  * filtering (object-fit: contain), so the preview is exactly the exported picture. Half and Quarter are
  * opt-in for slow machines. Exports render at their own resolution.
  */
-function sizeProgram() {
+let lastDisplay = [0, 0];
+function sizeProgram(dw = lastDisplay[0], dh = lastDisplay[1]) {
+  lastDisplay = [dw, dh];
   if (store.exporting) return;
   const [W, H] = store.dims;
   const q = typeof store.ui.previewScale === 'number' ? store.ui.previewScale : 1;
   renderer.resize(Math.max(2, Math.round(W * q)), Math.max(2, Math.round(H * q)));
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  renderer.setDisplaySize(Math.round(dw * dpr), Math.round(dh * dpr));
   markDirty();
 }
 function applyCanvasSize() {
@@ -82,7 +87,7 @@ async function voiceSelected() {
   }
 }
 
-const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize, onResize: () => sizeProgram() });
+const monitor = new Monitor({ store, renderer, playback, audio, actions, onQuality: applyCanvasSize, onResize: (dw, dh) => sizeProgram(dw, dh) });
 const textEditor = new InlineTextEditor({ store, renderer, monitor, playback });
 const timeline = new Timeline({ store, assets, playback, actions, onVoice: voiceSelected });
 const inspector = new Inspector({ store, assets, glfx, actions, voice, voiceover, audio, renderer });

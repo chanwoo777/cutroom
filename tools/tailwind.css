@@ -398,6 +398,8 @@
   .fx-card:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
   .fx-card canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 4px; background: var(--color-base); }
   .fx-card span { padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fx-hint { margin-top: 8px; }
+  .fx-hint .link-btn { padding: 0; margin: 0; color: var(--color-fg); text-decoration: underline; text-underline-offset: 3px; font-size: 12px; }
   .fx-target { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 12px; border-radius: 8px; background: var(--color-base); border: 1px solid var(--color-line); font-size: 12px; color: var(--color-muted); }
   .fx-target strong { color: var(--color-fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fx-target .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; background: var(--color-faint); }

@@ -22,13 +22,18 @@ const FORMATS = [
   { mime: 'video/webm', label: 'WebM', ext: 'webm' },
 ];
 const RESOLUTIONS = [480, 720, 1080, 1440, 2160];
-/** Bits per pixel per frame. Standard ≈ 12 Mbps and High ≈ 22 Mbps at 1080p30 (about 3x the old defaults). */
 // Bits per pixel at 30 fps; higher rates scale by (fps/30)^0.75 because consecutive frames share more detail.
-// 1080p: Draft ~7.5, Standard ~20.5, High ~31 Mbps at 30 fps; ~35 / ~52 Mbps Standard / High at 60 fps.
-const BPP = { draft: 0.12, standard: 0.33, high: 0.5 };
+// 1080p30: Draft ~7.5, Standard ~20.5, High ~31, Master ~81 Mbps (Master is near-lossless, for re-uploading
+// or re-editing without another generation of visible loss).
+const BPP = { draft: 0.12, standard: 0.33, high: 0.5, master: 1.3 };
+/** Sharpening applied to the final frame when the export is larger than every source clip. */
+const UPSCALE_SHARPEN = 0.3;
 const AUDIO_RATE = 48000;
-// H.264 levels: [level hex, max macroblocks per frame, max macroblocks per second]
-const AVC_LEVELS = [['28', 8192, 245760], ['2A', 8704, 522240], ['32', 22080, 589824], ['33', 36864, 983040], ['34', 36864, 2073600], ['3C', 139264, 4177920]];
+// H.264 levels: [level hex, max macroblocks per frame, max macroblocks per second, max High-profile bitrate]
+const AVC_LEVELS = [
+  ['28', 8192, 245760, 25e6], ['2A', 8704, 522240, 62.5e6], ['32', 22080, 589824, 168.75e6],
+  ['33', 36864, 983040, 300e6], ['34', 36864, 2073600, 300e6], ['3C', 139264, 4177920, 300e6],
+];
 
 export function supportedFormats() {
   if (typeof MediaRecorder === 'undefined') return [];
@@ -44,10 +49,10 @@ export function supportedFormats() {
 
 const hasWebCodecs = () => typeof VideoEncoder === 'function' && typeof VideoFrame === 'function';
 
-/** Smallest H.264 High level that fits the size and frame rate and that this browser can encode. */
+/** Smallest H.264 High level that fits the size, frame rate and bitrate and that this browser can encode. */
 async function pickVideoCodec(w, h, fps, bitrate) {
   const mbs = Math.ceil(w / 16) * Math.ceil(h / 16);
-  const candidates = AVC_LEVELS.filter(([, fs, mbps]) => mbs <= fs && mbs * fps <= mbps).map(([lv]) => `avc1.6400${lv}`);
+  const candidates = AVC_LEVELS.filter(([, fs, mbps, br]) => mbs <= fs && mbs * fps <= mbps && bitrate <= br).map(([lv]) => `avc1.6400${lv}`);
   for (const codec of candidates) {
     try {
       const { supported } = await VideoEncoder.isConfigSupported({ codec, width: w, height: h, framerate: fps, bitrate, bitrateMode: 'variable', latencyMode: 'quality', avc: { format: 'avc' } });
@@ -79,7 +84,7 @@ export class ExportDialog {
     Object.assign(this, { store, assets, renderer, playback, audio, blobs, monitor, applyCanvasSize });
     this.dlg = $('export-dialog');
     this.el = {
-      engine: $('ex-engine'), res: $('ex-res'), fps: $('ex-fps'), format: $('ex-format'), quality: $('ex-quality'), monitor: $('ex-monitor'),
+      preset: $('ex-preset'), engine: $('ex-engine'), res: $('ex-res'), fps: $('ex-fps'), format: $('ex-format'), quality: $('ex-quality'), monitor: $('ex-monitor'),
       monitorRow: $('ex-monitor-row'), summary: $('ex-summary'), note: $('ex-note'), settings: $('export-settings'), progress: $('export-progress'),
       bar: $('ex-bar'), pct: $('ex-pct'), eta: $('ex-eta'), phase: $('ex-phase'), result: $('ex-result'), cancel: $('ex-cancel'), start: $('ex-start'),
     };
@@ -90,13 +95,10 @@ export class ExportDialog {
     this.dlg.addEventListener('cancel', (e) => { if (this.state === 'running') e.preventDefault(); });
     this.dlg.addEventListener('close', () => this.#cleanupResult());
     for (const b of this.el.quality.querySelectorAll('button')) {
-      b.addEventListener('click', () => {
-        this.quality = b.dataset.q;
-        this.el.quality.querySelectorAll('button').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
-        this.#summary();
-      });
+      b.addEventListener('click', () => { this.#setQuality(b.dataset.q); this.el.preset.value = 'custom'; this.#summary(); });
     }
-    for (const k of ['res', 'fps', 'format']) this.el[k].addEventListener('change', () => this.#summary());
+    for (const k of ['res', 'fps', 'format']) this.el[k].addEventListener('change', () => { this.el.preset.value = 'custom'; this.#summary(); });
+    this.el.preset.addEventListener('change', () => { this.#applyPreset(this.el.preset.value); this.#summary(); });
     this.el.engine.addEventListener('change', () => { this.#fillFormats(); this.#summary(); });
     this.el.start.addEventListener('click', () => {
       if (this.state === 'done') this.#download();
@@ -106,6 +108,31 @@ export class ExportDialog {
       if (this.state === 'running') this.abort = true;
       else this.close();
     });
+  }
+
+  #setQuality(q) {
+    this.quality = q;
+    this.el.quality.querySelectorAll('button').forEach((x) => x.setAttribute('aria-checked', String(x.dataset.q === q)));
+  }
+
+  /** Presets fill in resolution and quality; editing any field afterwards switches back to Custom. */
+  #applyPreset(p) {
+    const native = this.#nativeShortSide();
+    const seq = Math.min(...this.store.dims);
+    if (p === 'standard') { this.el.res.value = String(Math.min(1080, RESOLUTIONS.reduce((a, r) => (r <= seq ? r : a), 1080))); this.#setQuality('standard'); }
+    else if (p === 'youtube4k') { this.el.res.value = '2160'; this.#setQuality('high'); }
+    else if (p === 'master') { this.el.res.value = String(Math.max(native, RESOLUTIONS.reduce((a, r) => (r <= seq ? r : a), 1080))); this.#setQuality('master'); }
+    if (this.el.engine.value !== 'webcodecs' && [...this.el.engine.options].some((o) => o.value === 'webcodecs')) { this.el.engine.value = 'webcodecs'; this.#fillFormats(); }
+  }
+
+  /** Short side of the largest source picture on the timeline (video or image). */
+  #largestSourceShort() {
+    let best = 0;
+    for (const c of this.store.project.clips) {
+      const a = this.assets.get(c.assetId);
+      if ((c.kind === 'video' || c.kind === 'image') && a?.width) best = Math.max(best, Math.min(a.width, a.height));
+    }
+    return best;
   }
 
   #usesStreamedAudio() {
@@ -134,6 +161,7 @@ export class ExportDialog {
     this.el.fps.replaceChildren(...FPS_OPTIONS.map((f) => { const o = document.createElement('option'); o.value = String(f); o.textContent = `${f} fps`; return o; }));
     this.el.fps.value = String(this.store.project.fps);
     this.#fillFormats();
+    this.el.preset.value = 'custom';
     this.#setState('idle');
     this.#summary();
     this.dlg.showModal();
@@ -174,7 +202,9 @@ export class ExportDialog {
     const engine = this.el.engine.value;
     const cap = engine === 'webcodecs' ? 150e6 : 80e6;
     const vbps = Math.round(Math.min(cap, Math.max(2e6, w * h * 30 * (fps / 30) ** 0.75 * BPP[this.quality])));
-    return { engine, w, h, fps, format, vbps, abps: 256000, monitorAudio: this.el.monitor.checked };
+    const src = this.#largestSourceShort();
+    const upscale = src > 0 && Math.min(w, h) > src * 1.05 ? src : 0;
+    return { engine, w, h, fps, format, vbps, abps: 256000, monitorAudio: this.el.monitor.checked, upscaleFrom: upscale, postSharpen: upscale && engine === 'webcodecs' ? UPSCALE_SHARPEN : 0 };
   }
 
   #summary() {
@@ -182,7 +212,8 @@ export class ExportDialog {
     const dur = this.store.duration;
     const bytes = ((o.vbps + o.abps) * dur) / 8;
     const how = o.engine === 'webcodecs' ? 'frame-accurate' : `real time, ${formatDuration(dur)}`;
-    this.el.summary.textContent = `${o.w}×${o.h} · ${o.fps} fps · ${o.format.label} · up to ${(o.vbps / 1e6).toFixed(1)} Mbps · ≈ ${formatBytes(bytes)} · ${how}`;
+    const up = o.upscaleFrom ? ` · upscaled from ${o.upscaleFrom}p${o.postSharpen ? ' and sharpened' : ''}` : '';
+    this.el.summary.textContent = `${o.w}×${o.h} · ${o.fps} fps · ${o.format.label} · up to ${(o.vbps / 1e6).toFixed(1)} Mbps · ≈ ${formatBytes(bytes)} · ${how}${up}`;
   }
 
   #setState(state) {
@@ -222,6 +253,7 @@ export class ExportDialog {
       return;
     } finally {
       this.playback.suspended = false;
+      if (this.renderer.gpu) this.renderer.gpu.postSharpen = 0;
       this.renderer.editingId = null;
       this.store.exporting = false;
       this.store.emit('exporting', false);
@@ -238,6 +270,7 @@ export class ExportDialog {
     this.store.clearSelection();
     this.renderer.editingId = null;
     this.renderer.resize(o.w, o.h);
+    if (this.renderer.gpu) this.renderer.gpu.postSharpen = o.postSharpen || 0;
     this.monitor.layout();
   }
 

@@ -25,7 +25,20 @@ export class Playback {
     this.drift = 0;
     this.suspended = false; // true while the frame-accurate exporter drives the videos
     this.onRelease = null;  // GPU texture cleanup hook (set by main)
+    this.gpu = null;        // compositor, for smooth-motion frame pairs during export (set by main)
   }
+
+  /**
+   * Smooth motion applies when the clip asks for it and its source frame rate is below the sequence
+   * rate (e.g. 24 fps footage in a 30 or 60 fps sequence). Returns the source frame rate or 0.
+   */
+  smoothFps(clip) {
+    if (!clip?.smooth || clip.kind !== 'video') return 0;
+    const fps = this.assets.get(clip.assetId)?.fps;
+    return fps && fps < this.store.project.fps - 0.5 ? fps : 0;
+  }
+
+  smoothActive(clip) { return this.smoothFps(clip) > 0; }
 
   /** Seconds the clip stays on screen after its end because the next clip transitions out of it. */
   #tail(project, c, t) {
@@ -147,7 +160,8 @@ export class Playback {
   }
 
   #syncActive(v, c, t, tr) {
-    const expected = c.in + (t - c.start) * c.speed;
+    const sf = this.playing ? this.smoothFps(c) : 0;
+    const expected = c.in + (t - c.start) * c.speed + (sf ? 1 / sf : 0);
     const target = Math.min(expected, (Number.isFinite(v.duration) ? v.duration : Infinity) - 0.001);
     const elementAudio = this.audio.elementNodes.has(c.id);
     if (elementAudio) this.audio.setElementGain(c.id, tr.muted ? 0 : c.volume ?? 1);
@@ -268,14 +282,41 @@ export class Playback {
       if (!tr || tr.hidden || !asset || asset.status !== 'ready' || t < c.start || t >= c.start + c.duration + this.#tail(project, c, t)) continue;
       const v = this.#ensure(c, asset);
       if (!v.paused) v.pause();
+      const end = (Number.isFinite(v.duration) ? v.duration : Infinity) - 0.001;
+      const src = c.in + (t - c.start) * c.speed;
+      const sf = this.smoothFps(c);
+      if (sf && this.gpu) {
+        // Smooth motion: hold the two source frames around this output time; the compositor blends them.
+        const k = Math.floor(src * sf + 1e-6);
+        const tPrev = k / sf, tCur = (k + 1) / sf;
+        if ((src - tPrev) * sf > 0.01 && tCur < end) { waits.push(this.#seekPair(c, v, tPrev, tCur, sf)); continue; }
+        v._cr.frameTime = tPrev;
+        waits.push(this.#seekExact(v, Math.min(tPrev + 0.25 / sf, end), sf));
+        continue;
+      }
+      v._cr.frameTime = null;
       // Aim slightly inside the frame so float error never lands on the previous frame's boundary.
-      const target = Math.min(c.in + (t - c.start) * c.speed + 0.25 / fps, (Number.isFinite(v.duration) ? v.duration : Infinity) - 0.001);
-      waits.push(this.#seekExact(v, target, fps));
+      waits.push(this.#seekExact(v, Math.min(src + 0.25 / fps, end), fps));
     }
     const n = (await Promise.all(waits)).filter(Boolean).length;
     // Drop decoders for clips that are behind us so long exports do not pile up video elements.
     for (const c of project.clips) if (c.kind === 'video' && c.start + c.duration < t - 6) this.release(c.id);
     return n;
+  }
+
+  /** Export: make the compositor hold frame tPrev as "previous" and leave the element on frame tCur. */
+  async #seekPair(c, v, tPrev, tCur, sf) {
+    const near = (a, b) => a != null && Math.abs(a - b) < 0.25 / sf;
+    const pair = this.gpu.framePair(c);
+    if (near(pair.prev, tPrev) && near(pair.cur, tCur)) return false; // already held
+    if (near(pair.cur, tPrev)) this.gpu.promoteFrame(c); // stepped forward by one source frame
+    else {
+      await this.#seekExact(v, tPrev + 0.25 / sf, sf);
+      this.gpu.captureFrame(c, tPrev);
+    }
+    v._cr.frameTime = tCur;
+    await this.#seekExact(v, tCur + 0.25 / sf, sf);
+    return true;
   }
 
   #seekExact(v, target, fps) {

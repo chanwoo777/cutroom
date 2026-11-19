@@ -23,7 +23,7 @@ import { clone } from './store.js';
  * @property {ClipAnimation} outroAnimation
  */
 
-export const DEFAULT_FX = () => ({ lut: 'none', lutAmount: 100, brightness: 0, contrast: 0, saturation: 0, blur: 0, sepia: 0, vignette: 0 });
+export const DEFAULT_FX = () => ({ lut: 'none', lutAmount: 100, brightness: 0, contrast: 0, saturation: 0, blur: 0, sepia: 0, vignette: 0, enhance: 0 });
 export const DEFAULT_TRANSFORM = () => ({ x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1 });
 export const DEFAULT_INTRO = () => ({ type: 'none', duration: 0.5 });
 export const DEFAULT_OUTRO = () => ({ type: 'none', duration: 0.5 });

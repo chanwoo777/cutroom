@@ -222,14 +222,30 @@ export class FxPanels {
       b.dataset.quick = q.id;
       return b;
     });
+    this.enhanceBtns = [[0, 'Off'], [1, 'Light'], [2, 'Strong']].map(([lvl, name]) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': 'false', text: name, dataset: { lvl: String(lvl) },
+      on: { click: () => this.#applyFx({ enhance: lvl }, lvl ? `Enhance: ${name}` : 'Enhance off') },
+    }));
+    const allBtn = h('button', { type: 'button', class: 'link-btn', text: 'Use Light on every clip', on: { click: () => this.#enhanceAll() } });
     pane.replaceChildren(
       h('p', { class: 'pane-note', text: 'Applies to every selected video or image clip. Fine-tune the result under Colour in the inspector.' }),
       this.fxTarget,
+      h('h3', { text: 'Enhance' }),
+      h('div', { class: 'seg fill', role: 'radiogroup', 'aria-label': 'Enhance' }, ...this.enhanceBtns),
+      h('p', { class: 'pane-note fx-hint' }, 'Smooths compression blocks and noise, then sharpens edges. Best for clips sent through messaging apps. ', allBtn),
       h('h3', { text: 'Quick grades' }),
       h('div', { class: 'fx-grid', role: 'group', 'aria-label': 'Quick grades' }, ...this.quickCards),
       h('h3', { text: 'Looks' }),
       h('div', { class: 'fx-grid', role: 'group', 'aria-label': 'Looks' }, ...this.lookCards),
     );
+  }
+
+  #enhanceAll() {
+    let n = 0;
+    for (const c of this.store.project.clips) if (isMedia(c) && !(c.fx.enhance | 0)) { c.fx = { ...c.fx, enhance: 1 }; n++; }
+    if (!n) { toast('Every clip already has Enhance on.'); return; }
+    this.store.commit(`Enhance ${n} clip${n > 1 ? 's' : ''}`);
+    toast(`Light enhance on ${n} clip${n > 1 ? 's' : ''}.`, { kind: 'ok' });
   }
 
   #applyFx(fx, label) {
@@ -257,6 +273,7 @@ export class FxPanels {
       ? h('span', {}, h('strong', { text: media.length === 1 ? media[0].name || 'Clip' : `${media.length} clips` }), media.length === 1 ? ' selected' : ' selected')
       : h('span', { text: 'Select a video or image clip on the timeline.' }));
     const one = media.length === 1 ? media[0].fx : null;
+    this.enhanceBtns.forEach((b) => b.setAttribute('aria-checked', String(!!one && (one.enhance | 0) === Number(b.dataset.lvl))));
     this.lookCards.forEach((b) => b.setAttribute('aria-pressed', String(!!one && one.lut === b.dataset.lut)));
     this.quickCards.forEach((b) => {
       const q = QUICK.find((x) => x.id === b.dataset.quick);

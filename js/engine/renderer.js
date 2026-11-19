@@ -88,13 +88,38 @@ export class Renderer {
     return fm;
   }
 
+  /**
+   * Composition size: the resolution every frame is composed at (sequence size, or the export size).
+   * Layouts, hit-testing and handles all use this coordinate space.
+   */
   resize(w, h) {
-    if (this.canvas.width === w && this.canvas.height === h) return;
-    this.canvas.width = w;
-    this.canvas.height = h;
+    this.comp = [w, h];
+    this.#applyCanvas();
   }
 
-  get size() { return [this.canvas.width, this.canvas.height]; }
+  /**
+   * Device-pixel size of the monitor. With the GPU compositor, the canvas backing store shrinks to it
+   * and the full-resolution frame is Lanczos-resampled into it, so the browser never downscales the
+   * canvas (bilinear CSS scaling aliases). Exports always use the full composition size.
+   */
+  setDisplaySize(w, h) {
+    this.display = w > 0 && h > 0 ? [w, h] : null;
+    this.#applyCanvas();
+  }
+
+  #applyCanvas() {
+    let [w, h] = this.comp || [this.canvas.width, this.canvas.height];
+    if (this.gpu && this.display && !this.store.exporting) {
+      const k = Math.min(1, this.display[0] / w, this.display[1] / h);
+      if (k < 0.999) { w = Math.max(2, Math.round(w * k)); h = Math.max(2, Math.round(h * k)); }
+    }
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+  }
+
+  get size() { return this.comp || [this.canvas.width, this.canvas.height]; }
 
   /**
    * Text box metrics plus the ink rectangle (box-local, unscaled) that alignment and snapping use, so a
@@ -195,8 +220,8 @@ export class Renderer {
   }
 
   #render2d(t) {
-    const { ctx, canvas, store } = this;
-    const W = canvas.width, H = canvas.height;
+    const { ctx, store } = this;
+    const [W, H] = this.size;
     const project = store.project;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;

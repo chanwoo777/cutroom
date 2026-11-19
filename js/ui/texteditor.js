@@ -75,7 +75,8 @@ export class InlineTextEditor {
     const c = this.store.getClip(this.clipId);
     if (!c) { this.close(false); return; }
     const { renderer } = this;
-    const L = renderer.layout(c, renderer.canvas.width, renderer.canvas.height);
+    const [cw, chh] = renderer.size;
+    const L = renderer.layout(c, cw, chh);
     const m = L.metrics;
     const k = this.monitor.k;
     const s = c.transform.scale ?? 1;

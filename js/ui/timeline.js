@@ -779,6 +779,8 @@ export class Timeline {
     if (clip.speed !== 1) badges += ` ${clip.speed}×`;
     const fx = clip.fx;
     if (fx && (fx.lut !== 'none' || fx.brightness || fx.contrast || fx.saturation || fx.blur || fx.sepia || fx.vignette) && (clip.kind === 'video' || clip.kind === 'image')) badges += ' · fx';
+    if (fx?.enhance && (clip.kind === 'video' || clip.kind === 'image')) badges += fx.enhance > 1 ? ' · enhance+' : ' · enhance';
+    if (clip.smooth && clip.kind === 'video') badges += ' · smooth';
     if (w > 28) ctx.fillText(name + badges, lx, y + LABEL_H / 2 + 0.5);
     const trD = transitionDuration(store.project, clip);
     if (trD > 0) {

@@ -44,7 +44,7 @@ export class Monitor {
 
   layout() {
     const r = this.stage.getBoundingClientRect();
-    const [W, H] = this.store.exporting ? [this.program.width, this.program.height] : this.store.dims;
+    const [W, H] = this.store.exporting ? this.renderer.size : this.store.dims;
     const pad = r.width < 520 ? 10 : 22;
     const fit = Math.max(0.01, Math.min((r.width - pad * 2) / W, (r.height - pad * 2) / H));
     // Canvas zoom: Fit, or a fixed ratio where 100% is one sequence pixel per screen pixel. The stage
@@ -70,7 +70,7 @@ export class Monitor {
     this.empty.hidden = this.store.project.clips.length > 0 || this.store.exporting;
   }
 
-  get k() { return this.dw / Math.max(1, this.program.width); }
+  get k() { return this.dw / Math.max(1, this.renderer.size[0]); }
 
   #screen(L) {
     const k = this.k;
@@ -232,7 +232,7 @@ export class Monitor {
    * the title-safe lines when guides are shown, and the edges and centres of the other visible layers.
    */
   #snapSetup(clip) {
-    const W = this.program.width, H = this.program.height;
+    const [W, H] = this.renderer.size;
     const r = this.renderer;
     const b = r.visualBounds(clip, W, H);
     const offX = [b.minX - b.cx, (b.minX + b.maxX) / 2 - b.cx, b.maxX - b.cx];

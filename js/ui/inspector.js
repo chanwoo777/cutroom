@@ -331,6 +331,7 @@ export class Inspector {
     if (clip0.kind === 'audio' && asset?.source === 'voice') out.push(this.#voiceInfo(C, asset));
     if (isVisual(clip0)) out.push(this.#transformSection(C, clip0));
     if (isVisual(clip0)) out.push(this.#animSection(C, clip0));
+    if (isMedia(clip0)) out.push(this.#qualitySection(C, clip0, asset));
     if (isMedia(clip0)) out.push(this.#colorSection(C));
     if (clip0.kind === 'audio' || (clip0.kind === 'video' && asset?.hasAudio)) out.push(this.#audioSection(C));
     if (clip0.kind === 'video' && asset && !asset.hasAudio) {
@@ -583,6 +584,42 @@ export class Inspector {
       this.#slider({ label: 'Duration', min: 0.1, max: () => Math.max(0.15, Math.min(2, C().duration)), step: 0.05, get: () => T().duration, set: (v) => { if (on()) C().transition.duration = v; }, commit: 'Transition duration', def: 0.5, unit: 'seconds', disabled: () => !on() }),
       h('p', { class: 'insp-note', text: `Blends in from "${prev.name || prev.kind}". The outgoing clip keeps playing underneath for the length of the transition.` }),
     ], this.openPanel ? this.#linkBtn('Browse', () => this.openPanel('tab-transitions')) : null);
+  }
+
+  /** Clean-up for compressed footage and frame-rate smoothing. Both run on the GPU in preview and export. */
+  #qualitySection(C, clip0, asset) {
+    const F = () => C().fx;
+    const rows = [
+      this.#segmented({ label: 'Enhance', options: [[0, 'Off'], [1, 'Light'], [2, 'Strong']], get: () => F().enhance | 0, set: (v) => { F().enhance = v; }, commit: 'Enhance' }),
+    ];
+    const srcInfo = asset?.width ? `${asset.width}×${asset.height}${asset.fps ? ` · ${Math.round(asset.fps * 100) / 100} fps` : ''}` : '';
+    const note = h('p', { class: 'insp-note' });
+    const updNote = () => {
+      const lvl = F().enhance | 0;
+      const parts = [lvl ? (lvl === 1 ? 'Light enhance smooths compression blocks and sharpens edges.' : 'Strong enhance cleans heavily compressed footage (messaging apps, screen recordings) more aggressively.') : 'Enhance cleans up blocky, noisy footage, such as clips sent through messaging apps.'];
+      if (srcInfo) parts.push(`Source: ${srcInfo}.`);
+      note.textContent = parts.join(' ');
+    };
+    this.bindings.push(updNote);
+    updNote();
+    rows.push(note);
+    if (clip0.kind === 'video') {
+      const seqFps = () => this.store.project.fps;
+      const usable = () => asset?.fps && asset.fps < seqFps() - 0.5;
+      rows.push(this.#segmented({ label: 'Smooth motion', options: [[false, 'Off'], [true, 'On']], get: () => !!C().smooth, set: (v) => { C().smooth = v; }, commit: 'Smooth motion' }));
+      const sNote = h('p', { class: 'insp-note' });
+      const updS = () => {
+        sNote.textContent = !asset?.fps
+          ? 'Smooth motion needs the clip\'s frame rate, which this file does not report (MP4 and MOV do).'
+          : usable()
+            ? `Blends neighbouring frames so this ${Math.round(asset.fps)} fps clip moves fluidly in the ${seqFps()} fps sequence. Very fast motion can show slight ghosting.`
+            : `This clip already runs at ${Math.round(asset.fps)} fps, the sequence rate or higher, so there is nothing to smooth. Raise the sequence frame rate (header badge) to use it.`;
+      };
+      this.bindings.push(updS);
+      updS();
+      rows.push(sNote);
+    }
+    return this.#section('Picture quality', rows);
   }
 
   #colorSection(C) {
